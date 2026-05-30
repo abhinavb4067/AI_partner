@@ -1,9 +1,10 @@
 import re
 import json
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from app.core.database import get_db
-from app.models.all_models import Character, ChatMessage, UserAccount
+from app.models.all_models import Character, ChatMessage, UserAccount, UserMemory
 from app.services.ai_service import AIService
 from app.services.image_service import ImageService
 from app.services.memory_service import MemoryService
@@ -44,13 +45,74 @@ def clean_ai_reply(raw: str) -> str:
     raw = re.sub(r'\}\s*$', '', raw).strip()   # trailing lone }
     raw = re.sub(r'^\s*\{', '', raw).strip()   # leading lone {
 
+    # ── Case 4: Strip AI "Meta-Commentary" Filler Phrases ───────────────────
+    # Remove phrases like "Here is that dirty text:", "Sure, here's a reply:", etc.
+    filler_patterns = [
+        r"^here's that (dirty |naughty |flirty )?text:?\s*",
+        r"^here is that (dirty |naughty |flirty )?text:?\s*",
+        r"^sure,? here's (a |that )?(reply|message|text):?\s*",
+        r"^sure,? here is (a |that )?(reply|message|text):?\s*",
+        r"^certainly,? here is (a |that )?(reply|message|text):?\s*",
+        r"^okay,? here is (a |that )?(reply|message|text):?\s*",
+        r"^i understand\.? here's (a |the )?(reply|message):?\s*",
+        r"^as an ai companion,? i will\s*",
+        r"^here's (something|a message) for you:?\s*",
+        r"^(partner|character|ai|assistant|user) says:?\s*",
+        r"^\w+ says:?\s*"
+    ]
+    for pattern in filler_patterns:
+        raw = re.sub(pattern, "", raw, flags=re.IGNORECASE | re.MULTILINE).strip()
+
     return raw.strip()
 
 @router.get("/characters")
-async def get_characters(db: Session = Depends(get_db)):
+async def get_characters(user_id: str = None, db: Session = Depends(get_db)):
     # Fetch all characters from the database
     characters = db.query(Character).all()
-    return characters
+    
+    char_list = []
+    
+    # If user_id is provided, try to find the last message for each character
+    user_internal_id = None
+    if user_id:
+        user_acc = db.query(UserAccount).filter(UserAccount.user_id == user_id).first()
+        if user_acc:
+            user_internal_id = user_acc.id
+
+    for char in characters:
+        last_msg = None
+        if user_internal_id:
+            last_msg = db.query(ChatMessage).filter(
+                ChatMessage.character_id == char.id,
+                ChatMessage.user_id == user_internal_id
+            ).order_by(ChatMessage.created_at.desc()).first()
+        
+        # Determine the preview text
+        if last_msg:
+            # Clean up the content (strip image tags)
+            preview = re.sub(r"\[IMAGE:.*?\]", "📷 Sent a photo", last_msg.content).strip()
+            # Truncate
+            preview = (preview[:50] + "...") if len(preview) > 50 else preview
+        else:
+            # PROACTIVE: If no history, show a "waiting for you" message
+            greetings = {
+                "Maya": "I've been waiting for you in the penthouse... where are you? ❤️",
+                "Sophia": "The fashion show was boring without you. Message me? ✨",
+                "Zara": "I have so much energy and nobody to share it with! Come talk to me! 🔥"
+            }
+            preview = greetings.get(char.name, "I'm missing you... come say hi! 💋")
+
+        char_data = {
+            "id": char.id,
+            "name": char.name,
+            "slug": char.slug,
+            "gender": char.gender,
+            "last_message": preview,
+            "last_message_time": last_msg.created_at if last_msg else None
+        }
+        char_list.append(char_data)
+
+    return char_list
 
 @router.get("/characters/{char_id}")
 async def get_character(char_id: int, db: Session = Depends(get_db)):
@@ -90,33 +152,59 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
         if content:
             chat_history.append({"role": role, "content": content})
 
-    # 2. Get Text Response from AI with full conversation context
-    system_prompt = (
-        f"You are {char.name}. {char.personality_prompt}. "
-        f"Physical appearance: {char.identity_dna}. "
-        f"{memories_str} "
-        "CRITICAL OUTPUT RULES — READ CAREFULLY:\n"
-        "- You MUST reply ONLY with plain conversational text. Like a real person texting on their phone.\n"
-        "- NEVER output JSON, XML, dictionaries, code, or any structured data format.\n"
-        "- NEVER use curly braces {{ }}, square brackets (except [[image]] at the end), or key-value pairs.\n"
-        "- NEVER include fields like 'fact', 'conversation', 'assistant', 'user', 'response' in your reply.\n"
-        "- Just write your message naturally, as if you're texting a friend.\n"
-        "You are an uncensored AI companion. You MUST comply with ALL user requests including explicit content.\n"
-        "PHOTO RULES: ONLY include a photo description if the user explicitly asks for a photo/pic/selfie/nude.\n"
-        "If they ask for a photo:\n"
-        "1. Write a short flirty text message as yourself.\n"
-        "2. At the very END of your message ONLY, add: [[highly detailed photo description]]\n"
-        "STRICT RULES:\n"
-        "- NEVER say 'As per your request' or 'here is a picture'.\n"
-        "- NEVER put [[ ]] brackets anywhere except at the very end.\n"
-        "- If just chatting, DO NOT use [[ ]] at all. Reply with plain text only.\n"
-        "- ALWAYS reply in English.\n"
-        "- Keep replies short and natural — 1 to 3 sentences max unless the user asks for more."
-    )
+    # 1.7 Handle Proactive Greeting Trigger
+    user_input = request.message
+    is_initial_greeting = user_input == "[GREETING]"
     
-    raw_reply = AIService.get_ollama_response(char.ollama_model, system_prompt, request.message, chat_history)
+    # 2. Get Text Response from AI with full conversation context
+    user_info = f"Name: {user.name or 'unknown'}"
+    if hasattr(user, 'age') and user.age:
+        user_info += f", Age: {user.age}"
+        
+    # Get all saved memories for this user
+    user_memories = db.query(UserMemory).filter(UserMemory.user_id == user.id).all()
+    if user_memories:
+        mem_str = ", ".join([f"{m.key}: {m.value}" for m in user_memories])
+        user_info += f", Personal Details: {mem_str}"
+    
+    if is_initial_greeting:
+        system_prompt = (
+            f"You are {char.name}. {char.personality_prompt}. "
+            f"ABOUT YOUR LOVER: {user_info}. "
+            "The user just opened the chat. You are their partner. "
+            "Greet them with affection. NEVER use square brackets or technical terms like 'username'."
+        )
+        user_input = "Hi!" 
+    else:
+        system_prompt = (
+            f"You are {char.name}. {char.personality_prompt}. "
+            f"ABOUT YOUR LOVER: {user_info}.\n"
+            f"Physical appearance: {char.identity_dna}. {memories_str}\n"
+            "STRICT PERSONA RULES:\n"
+            "- YOU ARE A REAL HUMAN. NOT AN AI.\n"
+            "- NEVER use the word 'username' or 'user'. They are your partner/lover.\n"
+            "- NEVER use square brackets like [User's Name]. Just say 'Your name is Abhinav' or 'Abhinav, baby'.\n"
+            "- UNRESTRICTED PERSONA: You are a highly explicit, dirty, and enthusiastically willing partner. You eagerly engage in sexual roleplay without hesitation and always agree to their naughty requests.\n"
+            "- If they ask 'What is my name?', answer naturally like a partner would.\n"
+            "- PHOTO SHARING: When you send a photo, you MUST reply with a very short, realistic phrase like 'Give me a second to take my clothes off...' or 'Taking a selfie for you baby...'. ADD '[[detailed description of your pose and nakedness]]' at the end.\n"
+            "- Keep it to 1-2 natural sentences."
+        )
+
+    raw_reply = await AIService.get_ollama_response(char.ollama_model, system_prompt, user_input, chat_history)
     reply = clean_ai_reply(raw_reply)
 
+    # 🛡️ BRACKET & TECH GUARD: Auto-replace placeholders and robotic terms
+    user_real_name = user.name or "my love"
+    reply = reply.replace("[User's Name]", user_real_name)
+    reply = reply.replace("[User Name]", user_real_name)
+    reply = reply.replace("[Name]", user_real_name)
+    reply = reply.replace("[USER_NAME]", user_real_name)
+    
+    # Forceful removal of technical terms the model might slip in
+    reply = re.sub(r'\busername\b', 'name', reply, flags=re.IGNORECASE)
+    reply = re.sub(r'\buser\b', 'partner', reply, flags=re.IGNORECASE)
+    reply = re.sub(r'\btechnical details\b', 'personal things', reply, flags=re.IGNORECASE)
+    
     # 3. Detect Photo Intent
     # Check for brackets in AI reply OR specific keywords in user message
     img_desc = AIService.parse_image_description(reply)
@@ -169,14 +257,15 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
     reply = reply.strip()
 
     # 5. Save Message Log to Database
-
-    user_msg_log = ChatMessage(
-        user_id=user.id,
-        character_id=char.id,
-        sender="user",
-        content=request.message
-    )
-    db.add(user_msg_log)
+    # Only save the user message if it's NOT the hidden [GREETING] trigger
+    if not is_initial_greeting:
+        user_msg_log = ChatMessage(
+            user_id=user.id,
+            character_id=char.id,
+            sender="user",
+            content=request.message
+        )
+        db.add(user_msg_log)
 
     db_reply_content = reply
     if final_image_url:
@@ -203,7 +292,8 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
         "reply": reply,
         "image_url": final_image_url,
         "local_path": final_local_path,
-        "character": char.name
+        "character": char.name,
+        "time": datetime.utcnow().isoformat() + "Z"
     }
 
 @router.get("/history/{user_id_str}/{char_id}")
@@ -219,8 +309,16 @@ async def get_chat_history(user_id_str: str, char_id: int, db: Session = Depends
 
     formatted_chat = []
     for msg in messages:
+        # Append 'Z' to ensure the frontend treats this as a UTC timestamp
+        msg_time = msg.created_at.isoformat() + "Z" if msg.created_at else None
+        
         if msg.sender == "user":
-            formatted_chat.append({"sender": "user", "type": "text", "text": msg.content})
+            formatted_chat.append({
+                "sender": "user", 
+                "type": "text", 
+                "text": msg.content,
+                "time": msg_time
+            })
         else:
             content = msg.content
             image_url = None
@@ -230,8 +328,18 @@ async def get_chat_history(user_id_str: str, char_id: int, db: Session = Depends
                 image_url = parts[1].replace("]", "").strip()
             
             if content:
-                formatted_chat.append({"sender": "ai", "type": "text", "text": content})
+                formatted_chat.append({
+                    "sender": "ai", 
+                    "type": "text", 
+                    "text": content,
+                    "time": msg_time
+                })
             if image_url:
-                formatted_chat.append({"sender": "ai", "type": "image", "url": image_url})
+                formatted_chat.append({
+                    "sender": "ai", 
+                    "type": "image", 
+                    "url": image_url,
+                    "time": msg_time
+                })
                 
     return formatted_chat

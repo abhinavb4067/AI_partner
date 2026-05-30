@@ -82,7 +82,7 @@ class ImageService:
                 f"{pose_tags}, {char_dna['identity']}, {char_dna['body']}, {face_logic}, {bg}, "
                 "realistic human skin anatomy, perfect anatomy, symmetrical breasts, "
                 "detailed visible nipples, real skin texture, skin pores, "
-                "amateur flash photography, 4k smartphone photo"
+                "high-end studio photography, professional lighting, perfectly proportioned body, masterpiece"
             )
             negatives = (
                 f"{base_negatives}, clothes, underwear, lingerie, bikini, censored, "
@@ -102,7 +102,7 @@ class ImageService:
         # 768x1024 gives more pixels per face for sharper detail than 720x1280
         url = (
             f"https://image.pollinations.ai/prompt/{encoded_prompt}?"
-            f"nologo=true&width=768&height=1024&negative={encoded_negatives}&seed={seed}&model=flux-realism"
+            f"nologo=true&width=768&height=1024&seed={seed}&model=flux-realism"
         )
         
         local_path = ImageService.get_local_path(char_name, user_name, clean_desc)

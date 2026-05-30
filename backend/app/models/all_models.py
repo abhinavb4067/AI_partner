@@ -33,7 +33,9 @@ class UserAccount(Base):
     __tablename__ = "user_accounts"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(String, unique=True)
+    email = Column(String, unique=True)
     name = Column(String)
+    age = Column(Integer)
     plan_id = Column(Integer, ForeignKey("subscription_plans.id"))
     tokens_left = Column(Integer, default=50)
 

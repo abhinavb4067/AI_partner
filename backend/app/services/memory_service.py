@@ -17,10 +17,9 @@ class MemoryService:
         return "Memory of User: " + ", ".join(fact_list)
 
     @staticmethod
-    def update_user_memory(user_internal_id: int, char_model: str, last_messages: list):
+    async def update_user_memory(user_internal_id: int, char_model: str, last_messages: list):
         """
         Background task to extract facts from recent messages and update the DB.
-        last_messages should be a list of dicts: [{'role': 'user', 'content': '...'}, ...]
         """
         db = SessionLocal()
         try:
@@ -37,8 +36,8 @@ class MemoryService:
                 "Conversation:\n" + context
             )
 
-            # Use Ollama to extract facts
-            raw_response = AIService.get_ollama_response(char_model, "You are a helpful JSON assistant.", extraction_prompt)
+            # Use Ollama to extract facts (Awaited now)
+            raw_response = await AIService.get_ollama_response(char_model, "You are a helpful JSON assistant.", extraction_prompt)
             
             # Find JSON in response
             json_match = re.search(r"\{.*\}", raw_response, re.DOTALL)
@@ -50,11 +49,9 @@ class MemoryService:
                 return
 
             for key, value in new_facts.items():
-                # Clean up key/value
                 clean_key = str(key).lower().strip()
                 clean_value = str(value).strip()
 
-                # Check if fact already exists
                 existing_fact = db.query(UserMemory).filter(
                     UserMemory.user_id == user_internal_id,
                     UserMemory.key == clean_key
