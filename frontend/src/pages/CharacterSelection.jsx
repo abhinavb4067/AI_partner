@@ -32,7 +32,10 @@ const CharacterSelection = () => {
   useEffect(() => {
     const fetchCharacters = async () => {
       try {
-        const res = await API.get('/api/chat/characters');
+        const uid = localStorage.getItem('user_id');
+        const res = await API.get('/api/chat/characters', {
+          params: { user_id: uid }
+        });
         setCharacters(res.data);
       } catch (err) {
         console.error('Failed to fetch characters:', err);
@@ -145,44 +148,67 @@ const CharacterSelection = () => {
               <p style={{ fontSize: 14 }}>No companions found</p>
             </div>
           ) : (
-            filtered.map((char) => (
-              <button
-                key={char.id}
-                onClick={() => navigate(`/chat/${char.id}`)}
-                style={{
-                  width: '100%', display: 'flex', alignItems: 'center',
-                  padding: '10px 16px', cursor: 'pointer', background: 'none',
-                  border: 'none', color: 'inherit', textAlign: 'left',
-                  transition: 'background 0.15s',
-                }}
-                onMouseEnter={e => e.currentTarget.style.background = '#202c33'}
-                onMouseLeave={e => e.currentTarget.style.background = 'none'}
-              >
-                {/* Avatar */}
-                <div style={{
-                  width: 46, height: 46, borderRadius: '50%', flexShrink: 0,
-                  background: getGradient(char.name),
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 18, fontWeight: 600, color: '#fff',
-                  boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
-                }}>
-                  {char.name[0].toUpperCase()}
-                </div>
+            filtered.map((char) => {
+              const lastTime = char.last_message_time 
+                ? new Date(char.last_message_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }).toLowerCase()
+                : 'now';
 
-                {/* Text info */}
-                <div style={{ flex: 1, minWidth: 0, marginLeft: 13, borderBottom: '1px solid #1f2c34', paddingBottom: 10 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: 15, fontWeight: 500, color: '#e9edef', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', paddingRight: 8 }}>
-                      {char.name}
-                    </span>
-                    <span style={{ fontSize: 11, color: '#8696a0', flexShrink: 0 }}>{formatTime()}</span>
+              return (
+                <button
+                  key={char.id}
+                  onClick={() => navigate(`/chat/${char.id}`)}
+                  style={{
+                    width: '100%', display: 'flex', alignItems: 'center',
+                    padding: '12px 16px', cursor: 'pointer', background: 'none',
+                    border: 'none', color: 'inherit', textAlign: 'left',
+                    transition: 'background 0.15s',
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = '#202c33'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                >
+                  {/* Avatar */}
+                  <div style={{
+                    width: 48, height: 48, borderRadius: '50%', flexShrink: 0,
+                    background: '#1a2632',
+                    overflow: 'hidden',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+                  }}>
+                    <img 
+                      src={`/avatars/${char.name}.jpg`} 
+                      alt={char.name} 
+                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      onError={(e) => {
+                        e.target.style.display = 'none';
+                        e.target.parentElement.innerHTML = `<div style="font-size:18px;font-weight:600;color:#fff">${char.name[0].toUpperCase()}</div>`;
+                      }}
+                    />
                   </div>
-                  <p style={{ fontSize: 13, color: '#8696a0', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {char.description || 'Tap to start chatting…'}
-                  </p>
-                </div>
-              </button>
-            ))
+
+                  {/* Text info */}
+                  <div style={{ flex: 1, minWidth: 0, marginLeft: 13, borderBottom: '1px solid #1f2c34', paddingBottom: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: 16, fontWeight: 500, color: '#e9edef' }}>
+                        {char.name}
+                      </span>
+                      <span style={{ fontSize: 12, color: '#00a884', fontWeight: 500 }}>{lastTime}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 3 }}>
+                      <p style={{ fontSize: 13.5, color: '#8696a0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, marginRight: 8 }}>
+                        {char.last_message}
+                      </p>
+                      <div style={{
+                        minWidth: 20, height: 20, borderRadius: 10, background: '#00a884',
+                        color: '#0b141a', fontSize: 11, fontWeight: 700,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 6px'
+                      }}>
+                        1
+                      </div>
+                    </div>
+                  </div>
+                </button>
+              );
+            })
           )}
         </div>
 

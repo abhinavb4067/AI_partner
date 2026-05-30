@@ -1,14 +1,24 @@
+"""
+Database engine and session factory — reads URL from settings.
+"""
 from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import declarative_base, sessionmaker
 
-# Replace with your actual password
-SQLALCHEMY_DATABASE_URL = "postgresql://postgres:Abhi%40123@localhost:5432/maya_memory"
-engine = create_engine(SQLALCHEMY_DATABASE_URL)
+from app.core.config import settings
+
+engine = create_engine(
+    settings.DATABASE_URL,
+    pool_pre_ping=True,   # recover from stale connections
+    pool_size=5,
+    max_overflow=10,
+)
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
+
 def get_db():
+    """FastAPI dependency — yields a DB session and guarantees cleanup."""
     db = SessionLocal()
     try:
         yield db

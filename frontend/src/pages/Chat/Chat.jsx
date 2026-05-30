@@ -5,6 +5,57 @@ import styles from "./ChatStyles";
 import EmojiPicker from "emoji-picker-react";
 import { FiImage, FiMic, FiSmile } from "react-icons/fi";
 
+const ImageMessage = ({ url, onClick }) => {
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState(false);
+  const [loadingText, setLoadingText] = useState("");
+
+  useEffect(() => {
+    const phrases = [
+      "Taking my clothes off... 😉",
+      "Taking a quick selfie for you baby... ❤️",
+      "Hold on, getting a good angle... 🔥",
+      "Getting undressed for you... 💋"
+    ];
+    setLoadingText(phrases[Math.floor(Math.random() * phrases.length)]);
+  }, []);
+
+  return (
+    <div style={{ position: "relative", minWidth: "200px", minHeight: "260px", backgroundColor: "rgba(0,0,0,0.1)", borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", margin: "4px 0" }}>
+      {!loaded && !error && (
+        <div style={{ position: "absolute", color: "#666", fontSize: "12px", display: "flex", flexDirection: "column", alignItems: "center", fontWeight: "500", textAlign: "center", padding: "0 10px" }}>
+          <div style={{ marginBottom: "12px", width: "28px", height: "28px", border: "3px solid rgba(0,0,0,0.1)", borderRadius: "50%", borderTopColor: "#0095f6", animation: "spin 1s linear infinite" }} />
+          {loadingText}
+        </div>
+      )}
+      {error ? (
+        <div style={{ color: "#ff4444", fontSize: "12px", padding: "10px", textAlign: "center", fontWeight: "500" }}>Failed to load image.<br/>The generation took too long.</div>
+      ) : (
+        <img
+          src={url}
+          alt="Shared"
+          style={{ ...styles.image, opacity: loaded ? 1 : 0, transition: "opacity 0.5s ease-in", cursor: "pointer", width: "100%", height: "100%", objectFit: "cover", position: loaded ? "relative" : "absolute" }}
+          onClick={onClick}
+          onLoad={() => setLoaded(true)}
+          onError={(e) => {
+            const retryCount = parseInt(e.target.dataset.retried || "0");
+            if (retryCount < 6) {
+              e.target.dataset.retried = (retryCount + 1).toString();
+              setTimeout(() => {
+                const currentSrc = e.target.src;
+                e.target.src = "";
+                e.target.src = currentSrc;
+              }, 4000);
+            } else {
+              setError(true);
+            }
+          }}
+        />
+      )}
+    </div>
+  );
+};
+
 function Chat() {
   const [message, setMessage] = useState("");
   const [chat, setChat] = useState([]);
@@ -42,21 +93,111 @@ function Chat() {
     fetchCharDetails();
   }, [charId]);
 
+  const greetingTriggered = useRef(false);
+  const followUpTimer = useRef(null);
+  const proactiveCount = useRef(0);
+  const isInitialLoad = useRef(true);
+
   // ✅ Fetch Chat History on Load
   useEffect(() => {
     const fetchHistory = async () => {
-      if (loggedInUserId && charId) {
+      const uid = localStorage.getItem("user_id");
+      if (uid && charId) {
         try {
-          const encodedUserId = encodeURIComponent(loggedInUserId);
+          const encodedUserId = encodeURIComponent(uid);
           const res = await API.get(`/api/chat/history/${encodedUserId}/${charId}`);
-          setChat(res.data);
+          const history = res.data;
+          setChat(history);
+          
+          // 🚀 PROACTIVE LOGIC: Only run once on mount/char change
+          if (isInitialLoad.current || charId) {
+            isInitialLoad.current = false;
+            
+            // Count how many consecutive AI messages are at the end
+            let aiConsecutive = 0;
+            for (let i = history.length - 1; i >= 0; i--) {
+              if (history[i].sender === "ai") aiConsecutive++;
+              else break;
+            }
+
+            // 1️⃣ If chat is TOTALLY empty -> Send Initial Greeting
+            if (history.length === 0 && !greetingTriggered.current) {
+              greetingTriggered.current = true;
+              proactiveCount.current = 1;
+              triggerAutoGreeting(uid, "[GREETING]");
+              scheduleFollowUp(uid);
+            } 
+            // 2️⃣ If last message was AI and only 1 AI message exists -> Maybe follow up
+            else if (aiConsecutive === 1 && !history.some(m => m.sender === "user")) {
+                proactiveCount.current = 1;
+                scheduleFollowUp(uid);
+            }
+            // 3️⃣ If 2 or more AI messages with no user reply -> STOP COMPLETELY
+            else if (aiConsecutive >= 2) {
+                greetingTriggered.current = true;
+                proactiveCount.current = 2;
+                if (followUpTimer.current) clearTimeout(followUpTimer.current);
+            }
+          }
         } catch (err) {
           console.error("Failed to load chat history:", err);
         }
       }
     };
     fetchHistory();
-  }, [loggedInUserId, charId]);
+  }, [charId]);
+
+  const scheduleFollowUp = (uid) => {
+    if (followUpTimer.current) clearTimeout(followUpTimer.current);
+    followUpTimer.current = setTimeout(() => {
+      setChat(prev => {
+        const stillNoUser = !prev.some(m => m.sender === "user");
+        // Count consecutive AI messages in state
+        let aiConsecutive = 0;
+        for (let i = prev.length - 1; i >= 0; i--) {
+            if (prev[i].sender === "ai") aiConsecutive++;
+            else break;
+        }
+
+        if (stillNoUser && aiConsecutive === 1) {
+          proactiveCount.current = 2;
+          triggerAutoGreeting(uid, "I miss you... what are you doing? why aren't you replying? ❤️");
+        }
+        return prev;
+      });
+    }, 120000); // 2 minutes
+  };
+
+  // Dedicated effect for cleanup only
+  useEffect(() => {
+    return () => {
+      if (followUpTimer.current) clearTimeout(followUpTimer.current);
+    };
+  }, []);
+
+  const triggerAutoGreeting = async (uid, triggerMessage) => {
+    setIsTyping(true);
+    try {
+      const res = await API.post("/api/chat/", {
+        user_id: uid,
+        char_id: charId,
+        message: triggerMessage,
+      });
+
+      const aiResponse = {
+        sender: "ai",
+        type: "text",
+        text: res.data.reply,
+        time: res.data.time || new Date().toISOString()
+      };
+
+      setChat((prev) => [...prev, aiResponse]);
+    } catch (err) {
+      console.error("Auto-greeting failed:", err);
+    } finally {
+      setIsTyping(false);
+    }
+  };
 
   const sendMessage = async () => {
     if (!message.trim() || !loggedInUserId) return;
@@ -176,7 +317,14 @@ function Chat() {
         {/* HEADER */}
         <div style={styles.header}>
           <div style={styles.headerLeft}>
-            <div style={styles.avatar}></div>
+            <div style={{...styles.avatar, overflow: 'hidden'}}>
+              <img 
+                src={`/avatars/${charName}.jpg`} 
+                alt={charName} 
+                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                onError={(e) => { e.target.style.display = 'none'; }}
+              />
+            </div>
             <div>
               <div style={styles.name}>{charName}</div>
               <div style={{ fontSize: "10px", color: "#00ff00" }}>Online</div>
@@ -185,42 +333,89 @@ function Chat() {
         </div>
 
         {/* MESSAGES */}
+        {/* Chat Messages */}
         <div style={styles.messages}>
-          {chat.map((msg, i) => (
-            <div
-              key={i}
-              style={{
-                ...styles.message,
-                alignSelf: msg.sender === "user" ? "flex-end" : "flex-start",
-                backgroundColor: msg.sender === "user" ? "#0095f6" : "#efefef",
-                color: msg.sender === "user" ? "#fff" : "#000",
-              }}
-            >
-              {msg.type === "text" && msg.text}
-              {msg.type === "image" && (
-                <img
-                  src={msg.url}
-                  alt="Shared"
-                  style={{ ...styles.image, cursor: "pointer" }}
-                  onClick={() => setFullScreenImage(msg.url)}
-                  onError={(e) => {
-                    // If image fails to load, try again after 2 seconds
-                    if (!e.target.dataset.retried) {
-                      e.target.dataset.retried = "true";
-                      setTimeout(() => {
-                        const currentSrc = e.target.src;
-                        e.target.src = ""; // Clear
-                        e.target.src = currentSrc; // Reload
-                      }, 2000);
-                    }
-                  }}
-                />
-              )}
-              {msg.type === "audio" && (
-                <audio controls src={msg.url} style={styles.audio} />
-              )}
-            </div>
-          ))}
+          {chat.reduce((acc, msg, i) => {
+            const msgDate = new Date(msg.time || new Date());
+            const today = new Date();
+            const yesterday = new Date();
+            yesterday.setDate(today.getDate() - 1);
+
+            const isToday = msgDate.toDateString() === today.toDateString();
+            const isYesterday = msgDate.toDateString() === yesterday.toDateString();
+
+            let dateLabel = msgDate.toLocaleDateString([], { day: '2-digit', month: '2-digit', year: 'numeric' });
+            if (isToday) dateLabel = "Today";
+            else if (isYesterday) dateLabel = "Yesterday";
+
+            // Check if we need a date separator
+            const prevMsg = chat[i - 1];
+            const prevDate = prevMsg ? new Date(prevMsg.time || new Date()).toDateString() : null;
+            const currentDate = msgDate.toDateString();
+
+            if (currentDate !== prevDate) {
+              acc.push(
+                <div key={`date-${i}`} style={{
+                  textAlign: "center",
+                  margin: "20px 0",
+                  display: "flex",
+                  justifyContent: "center"
+                }}>
+                  <span style={{
+                    backgroundColor: "rgba(0,0,0,0.05)",
+                    padding: "4px 12px",
+                    borderRadius: "12px",
+                    fontSize: "12px",
+                    color: "rgba(0,0,0,0.5)",
+                    fontWeight: "600",
+                    textTransform: "uppercase"
+                  }}>
+                    {dateLabel}
+                  </span>
+                </div>
+              );
+            }
+
+            acc.push(
+              <div
+                key={i}
+                style={{
+                  ...styles.message,
+                  alignSelf: msg.sender === "user" ? "flex-end" : "flex-start",
+                  backgroundColor: msg.sender === "user" ? "#0095f6" : "#efefef",
+                  color: msg.sender === "user" ? "#fff" : "#000",
+                  display: "flex",
+                  flexDirection: "column",
+                  position: "relative",
+                  paddingBottom: "18px",
+                  minWidth: "60px"
+                }}
+              >
+                {msg.type === "text" && msg.text}
+                {msg.type === "image" && (
+                  <ImageMessage url={msg.url} onClick={() => setFullScreenImage(msg.url)} />
+                )}
+                {msg.type === "audio" && (
+                  <audio controls src={msg.url} style={styles.audio} />
+                )}
+                
+                <div style={{
+                  position: "absolute",
+                  bottom: "4px",
+                  right: "8px",
+                  fontSize: "10px",
+                  color: msg.sender === "user" ? "rgba(255,255,255,0.7)" : "rgba(0,0,0,0.4)",
+                  fontWeight: "500"
+                }}>
+                  {msg.time 
+                    ? new Date(msg.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }).toLowerCase()
+                    : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }).toLowerCase()}
+                </div>
+              </div>
+            );
+            return acc;
+          }, [])}
+          
           {isTyping && (
             <div
               style={{

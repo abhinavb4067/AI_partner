@@ -1,47 +1,98 @@
-from fastapi import APIRouter, Depends, HTTPException
+"""User auth routes — register, login, /me."""
+from __future__ import annotations
+
+from datetime import datetime, timedelta
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+
 from app.core.database import get_db
-from app.models.all_models import UserAccount, SubscriptionPlan
-from pydantic import BaseModel, EmailStr
+from app.core.security import hash_password, verify_password, create_user_token
+from app.models.all_models import SubscriptionPlan, UserAccount
+from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse
+from app.api.deps import get_current_user
 
 router = APIRouter()
 
-class RegisterRequest(BaseModel):
-    name: str
-    email: EmailStr
-    age: int
-    password: str
 
-class LoginRequest(BaseModel):
-    email: EmailStr
-    password: str
-
-@router.post("/register")
+@router.post("/register", response_model=TokenResponse)
 async def register(req: RegisterRequest, db: Session = Depends(get_db)):
-    # 1. Check if user exists
-    existing = db.query(UserAccount).filter(UserAccount.user_id == req.email).first()
-    if existing:
+    # Check duplicate
+    if db.query(UserAccount).filter(UserAccount.user_id == req.email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
-    
-    # 2. Get the default 'free' plan ID
-    free_plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.plan_name == "free").first()
-    
-    # 3. Create User
-    new_user = UserAccount(
-        user_id=req.email, # Using email as the unique ID for now
-        name=req.name,
-        plan_id=free_plan.id,
-        tokens_left=50
-    )
-    # Note: In a real app, you would hash the password here.
-    db.add(new_user)
-    db.commit()
-    return {"message": "User created successfully", "user_id": req.email}
 
-@router.post("/login")
+    free_plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.plan_name == "free").first()
+    monthly_credits = free_plan.monthly_credits if free_plan else 50
+
+    user = UserAccount(
+        user_id=req.email,
+        email=req.email,
+        name=req.name,
+        age=req.age,
+        hashed_password=hash_password(req.password),
+        plan_id=free_plan.id if free_plan else None,
+        credits_remaining=monthly_credits,
+        credits_reset_at=datetime.utcnow() + timedelta(days=30),
+        is_active=True,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    token = create_user_token(user.user_id)
+    return TokenResponse(
+        access_token=token,
+        user_id=user.user_id,
+        name=user.name or "",
+        email=user.email or user.user_id,
+        plan_name=free_plan.plan_name if free_plan else "free",
+        credits_remaining=user.credits_remaining,
+        is_unlimited=user.is_unlimited,
+    )
+
+
+@router.post("/login", response_model=TokenResponse)
 async def login(req: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(UserAccount).filter(UserAccount.user_id == req.email).first()
+
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    # Add your password check logic here
-    return {"message": "Login successful", "user_id": user.user_id, "name": user.name}
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    # Legacy users may have no hashed_password — treat email as temp password
+    if user.hashed_password:
+        if not verify_password(req.password, user.hashed_password):
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+    else:
+        # Set password on first login for legacy users
+        user.hashed_password = hash_password(req.password)
+        db.commit()
+
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="Account is disabled")
+
+    plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.id == user.plan_id).first()
+    token = create_user_token(user.user_id)
+
+    return TokenResponse(
+        access_token=token,
+        user_id=user.user_id,
+        name=user.name or "",
+        email=user.email or user.user_id,
+        plan_name=plan.plan_name if plan else "free",
+        credits_remaining=user.credits_remaining,
+        is_unlimited=user.is_unlimited,
+    )
+
+
+@router.get("/me")
+async def me(current_user: UserAccount = Depends(get_current_user), db: Session = Depends(get_db)):
+    plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.id == current_user.plan_id).first()
+    return {
+        "user_id": current_user.user_id,
+        "name": current_user.name,
+        "email": current_user.email or current_user.user_id,
+        "avatar_url": current_user.avatar_url,
+        "plan_name": plan.plan_name if plan else "free",
+        "credits_remaining": current_user.credits_remaining,
+        "is_unlimited": current_user.is_unlimited,
+        "created_at": current_user.created_at,
+    }
