@@ -3,6 +3,8 @@ import httpx
 import re
 import asyncio
 
+from app.core.config import settings
+
 class AIService:
     @staticmethod
     async def get_ollama_response(model: str, system_prompt: str, user_message: str, chat_history: list = None):
@@ -24,8 +26,8 @@ class AIService:
             "top_k": 20
         }
         
-        # Pulling the key securely from local environment variables
-        api_key = os.getenv("OPENROUTER_API_KEY")
+        # Pulling the key securely from settings
+        api_key = settings.OPENROUTER_API_KEY
         
         headers = {
             "Authorization": f"Bearer {api_key}",

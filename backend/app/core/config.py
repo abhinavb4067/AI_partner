@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     VERSION: str = "2.0.0"
 
     # ── Database ─────────────────────────────────────────────────────────────
-    DATABASE_URL: str = "postgresql://postgres:password@localhost:5432/maya_memory"
+    DATABASE_URL: str = "postgresql://postgres:password@localhost:5432/postgres"
 
     # ── JWT ──────────────────────────────────────────────────────────────────
     SECRET_KEY: str = "change-me-in-production"
@@ -56,9 +56,13 @@ class Settings(BaseSettings):
     def avatars_folder(self) -> str:
         return os.path.join(self.MEDIA_FOLDER, "avatars")
 
+    @property
+    def posts_folder(self) -> str:
+        return os.path.join(self.MEDIA_FOLDER, "posts")
+
     def ensure_media_dirs(self) -> None:
         """Create all required media directories on startup."""
-        for folder in [self.MEDIA_FOLDER, self.characters_folder, self.avatars_folder]:
+        for folder in [self.MEDIA_FOLDER, self.characters_folder, self.avatars_folder, self.posts_folder]:
             os.makedirs(folder, exist_ok=True)
 
     class Config:

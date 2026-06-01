@@ -41,7 +41,7 @@ def run_safe(conn, sql: str, label: str):
 def migrate():
     print("\n[START] Running migrate_v2.py ...\n")
 
-    with engine.begin() as conn:
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
         # ── user_accounts ─────────────────────────────────────────────────────
         print("[INFO] Updating user_accounts ...")
         run_safe(conn, "ALTER TABLE user_accounts ADD COLUMN hashed_password VARCHAR", "add hashed_password")

@@ -4,7 +4,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from app.core.database import get_db
-from app.models.all_models import Character, ChatMessage, UserAccount, UserMemory
+from app.models.all_models import Character, CharacterPost, ChatMessage, UserAccount, UserMemory
 from app.services.ai_service import AIService
 from app.services.image_service import ImageService
 from app.services.memory_service import MemoryService
@@ -85,14 +85,16 @@ async def get_characters(user_id: str = None, db: Session = Depends(get_db)):
             last_msg = db.query(ChatMessage).filter(
                 ChatMessage.character_id == char.id,
                 ChatMessage.user_id == user_internal_id
-            ).order_by(ChatMessage.created_at.desc()).first()
+            ).order_by(ChatMessage.id.desc()).first()
         
         # Determine the preview text
+        last_message_sender = None
         if last_msg:
             # Clean up the content (strip image tags)
             preview = re.sub(r"\[IMAGE:.*?\]", "📷 Sent a photo", last_msg.content).strip()
             # Truncate
             preview = (preview[:50] + "...") if len(preview) > 50 else preview
+            last_message_sender = last_msg.sender
         else:
             # PROACTIVE: If no history, show a "waiting for you" message
             greetings = {
@@ -101,13 +103,17 @@ async def get_characters(user_id: str = None, db: Session = Depends(get_db)):
                 "Zara": "I have so much energy and nobody to share it with! Come talk to me! 🔥"
             }
             preview = greetings.get(char.name, "I'm missing you... come say hi! 💋")
+            last_message_sender = "assistant"
 
         char_data = {
             "id": char.id,
             "name": char.name,
             "slug": char.slug,
             "gender": char.gender,
+            "about": char.about,
+            "photo_url": char.photo_url,
             "last_message": preview,
+            "last_message_sender": last_message_sender,
             "last_message_time": last_msg.created_at if last_msg else None
         }
         char_list.append(char_data)
@@ -121,6 +127,19 @@ async def get_character(char_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Character not found")
     return char
 
+@router.get("/characters/{char_id}/posts")
+async def get_character_posts(char_id: int, db: Session = Depends(get_db)):
+    posts = db.query(CharacterPost).filter(CharacterPost.character_id == char_id).order_by(CharacterPost.created_at.desc()).all()
+    return [
+        {
+            "id": p.id,
+            "media_url": p.media_url,
+            "media_type": p.media_type,
+            "is_premium": p.is_premium,
+            "created_at": p.created_at
+        } for p in posts
+    ]
+
 
 
 @router.post("/")
@@ -133,6 +152,21 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
     user = db.query(UserAccount).filter(UserAccount.user_id == request.user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+
+    # 1.1 Credit Gating
+    is_photo_request = any(w in request.message.lower() for w in [
+        "photo", "pic", "selfie", "picture", "show me", "send", "nude", 
+        "naked", "boobs", "tits", "pussy", "vagina", "ass", "body", "strip", "take off"
+    ])
+    credit_cost = 5 if is_photo_request else 1
+    
+    if not user.is_unlimited:
+        if user.credits_remaining < credit_cost:
+            raise HTTPException(status_code=402, detail="out_of_credits")
+        
+        # Deduct credits immediately
+        user.credits_remaining -= credit_cost
+        db.commit()
 
     # 1.5 Fetch User Memory
     memories_str = MemoryService.get_user_memories_string(db, user.id)
@@ -305,7 +339,7 @@ async def get_chat_history(user_id_str: str, char_id: int, db: Session = Depends
     messages = db.query(ChatMessage).filter(
         ChatMessage.user_id == user.id,
         ChatMessage.character_id == char_id
-    ).order_by(ChatMessage.created_at.asc()).all()
+    ).order_by(ChatMessage.id.asc()).all()
 
     formatted_chat = []
     for msg in messages:

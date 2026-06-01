@@ -14,9 +14,9 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_admin, get_db
-from app.models.all_models import AdminUser, Character, ChatMessage, Payment, SubscriptionPlan, UserAccount
+from app.models.all_models import AdminUser, Character, CharacterPost, ChatMessage, Payment, SubscriptionPlan, UserAccount
 from app.schemas.admin import UpdateUserRequest, PlanUpdateRequest
-from app.utils.file_upload import save_character_photo
+from app.utils.file_upload import save_character_photo, save_character_post
 
 router = APIRouter()
 
@@ -145,7 +145,7 @@ async def list_characters(_: AdminUser = Depends(get_current_admin), db: Session
             "hair_color": c.hair_color, "eye_color": c.eye_color,
             "voice_enabled": c.voice_enabled, "elevenlabs_voice_id": c.elevenlabs_voice_id,
             "is_active": c.is_active, "plan_id": c.plan_id,
-            "ollama_model": c.ollama_model,
+            "ollama_model": c.ollama_model, "about": c.about,
         }
         for c in chars
     ]
@@ -168,6 +168,7 @@ async def create_character(
     plan_id: Optional[int] = Form(None),
     voice_enabled: bool = Form(False),
     elevenlabs_voice_id: Optional[str] = Form(None),
+    about: Optional[str] = Form("Available"),
     photo: Optional[UploadFile] = File(None),
     _: AdminUser = Depends(get_current_admin),
     db: Session = Depends(get_db),
@@ -186,6 +187,7 @@ async def create_character(
         ollama_model=ollama_model, plan_id=plan_id,
         voice_enabled=voice_enabled and bool(elevenlabs_voice_id),
         elevenlabs_voice_id=elevenlabs_voice_id if voice_enabled else None,
+        about=about,
         photo_url=photo_url, is_active=True,
     )
     db.add(char)
@@ -212,6 +214,7 @@ async def update_character(
     voice_enabled: Optional[bool] = Form(None),
     elevenlabs_voice_id: Optional[str] = Form(None),
     is_active: Optional[bool] = Form(None),
+    about: Optional[str] = Form(None),
     photo: Optional[UploadFile] = File(None),
     _: AdminUser = Depends(get_current_admin),
     db: Session = Depends(get_db),
@@ -237,11 +240,55 @@ async def update_character(
     if voice_enabled is not None:
         char.voice_enabled = voice_enabled and bool(char.elevenlabs_voice_id)
     if is_active is not None: char.is_active = is_active
+    if about is not None: char.about = about
     if photo and photo.filename:
         char.photo_url = await save_character_photo(photo)
 
     db.commit()
     return {"message": "Character updated"}
+
+
+# ── Admin Character Posts ───────────────────────────────────────────────────
+@router.get("/characters/{char_id}/posts")
+async def get_character_posts(char_id: int, _: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db)):
+    posts = db.query(CharacterPost).filter(CharacterPost.character_id == char_id).order_by(CharacterPost.created_at.desc()).all()
+    return [
+        {
+            "id": p.id, "media_url": p.media_url, "media_type": p.media_type, 
+            "is_premium": p.is_premium, "created_at": p.created_at
+        } for p in posts
+    ]
+
+@router.post("/characters/{char_id}/posts")
+async def create_character_post(
+    char_id: int,
+    is_premium: bool = Form(True),
+    file: UploadFile = File(...),
+    _: AdminUser = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    char = db.query(Character).filter(Character.id == char_id).first()
+    if not char: raise HTTPException(404, "Character not found")
+    
+    media_url, media_type = await save_character_post(file)
+    
+    post = CharacterPost(
+        character_id=char_id,
+        media_url=media_url,
+        media_type=media_type,
+        is_premium=is_premium
+    )
+    db.add(post)
+    db.commit()
+    return {"message": "Post created"}
+
+@router.delete("/characters/posts/{post_id}")
+async def delete_character_post(post_id: int, _: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db)):
+    post = db.query(CharacterPost).filter(CharacterPost.id == post_id).first()
+    if not post: raise HTTPException(404, "Post not found")
+    db.delete(post)
+    db.commit()
+    return {"message": "Post deleted"}
 
 
 @router.delete("/characters/{char_id}")

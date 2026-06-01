@@ -93,6 +93,7 @@ class Character(Base):
     slug = Column(String(100), unique=True, nullable=False)
     gender = Column(String(20), default="female")
     age_display = Column(Integer, nullable=True)                        # character's apparent age
+    about = Column(String(250), default="Available")                    # WhatsApp style contact info
 
     # AI model
     ollama_model = Column(String(100), default="dolphin-llama3:8b")
@@ -119,6 +120,7 @@ class Character(Base):
 
     required_plan = relationship("SubscriptionPlan", back_populates="characters")
     messages = relationship("ChatMessage", back_populates="character")
+    posts = relationship("CharacterPost", back_populates="character", cascade="all, delete-orphan")
 
 
 # ── User Memory ───────────────────────────────────────────────────────────────
@@ -167,3 +169,17 @@ class Payment(Base):
 
     user = relationship("UserAccount", back_populates="payments")
     plan = relationship("SubscriptionPlan", back_populates="payments")
+
+
+# ── Character Posts / Reels ───────────────────────────────────────────────────
+class CharacterPost(Base):
+    __tablename__ = "character_posts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    character_id = Column(Integer, ForeignKey("characters.id"), nullable=False)
+    media_url = Column(String, nullable=False)
+    media_type = Column(String(20), default="image")                    # 'image' or 'video'
+    is_premium = Column(Boolean, default=True)                          # if true, requires unlimited plan
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    character = relationship("Character", back_populates="posts")
