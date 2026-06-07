@@ -3,62 +3,92 @@ import { useNavigate } from 'react-router-dom';
 import brand from '../config/brand';
 import API from '../api/api';
 
+const loadRazorpayScript = () => {
+  return new Promise((resolve) => {
+    if (window.Razorpay) { resolve(true); return; }
+    const script = document.createElement('script');
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.body.appendChild(script);
+  });
+};
+
 export default function Pricing() {
   const [plans, setPlans] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [gatewayConfig, setGatewayConfig] = useState({ gateway: 'stripe', public_key: '' });
+  const [loadingPlanName, setLoadingPlanName] = useState(null);
   const navigate = useNavigate();
   const isLoggedIn = Boolean(localStorage.getItem('token'));
 
   useEffect(() => {
-    API.get('/api/admin/plans').then(r => setPlans(r.data.filter(p => p.is_active !== false))).catch(() => {});
+    API.get('/api/payment/plans').then(r => setPlans(r.data)).catch(() => {});
+    API.get('/api/payment/config').then(r => setGatewayConfig(r.data)).catch(() => {});
   }, []);
 
   const handleSubscribe = async (plan) => {
     if (!isLoggedIn) { navigate('/login'); return; }
     if (plan.price_monthly === 0) { navigate('/select-character'); return; }
-    setLoading(true);
+    setLoadingPlanName(plan.plan_name);
+
     try {
       const res = await API.post('/api/payment/create-order', { plan_id: plan.id });
-      const { order_id, amount, key_id } = res.data;
-
-      if (key_id.includes('DUMMY')) {
-        // Dev mode: simulate success
-        const verify = await API.post('/api/payment/verify', {
-          razorpay_order_id: order_id, razorpay_payment_id: 'pay_DUMMY_SUCCESS',
-          razorpay_signature: 'dummy_signature', plan_id: plan.id,
+      
+      if (res.data.gateway === 'stripe') {
+        // Stripe Flow
+        window.location.href = res.data.checkout_url;
+      } else {
+        // Razorpay Flow
+        const isLoaded = await loadRazorpayScript();
+        if (!isLoaded) throw new Error("Razorpay SDK failed to load.");
+        
+        const userInfo = JSON.parse(localStorage.getItem('user_info') || '{}');
+        
+        const options = {
+          key: res.data.key_id,
+          amount: res.data.amount,
+          currency: res.data.currency,
+          name: brand.name,
+          description: `Subscription: ${res.data.plan_name}`,
+          order_id: res.data.order_id,
+          handler: async function (response) {
+            try {
+              const verifyRes = await API.post('/api/payment/verify', {
+                plan_id: plan.id,
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature,
+              });
+              
+              const info = JSON.parse(localStorage.getItem('user_info') || '{}');
+              info.plan_name = verifyRes.data.plan;
+              info.credits_remaining = verifyRes.data.credits;
+              info.is_unlimited = verifyRes.data.is_unlimited;
+              localStorage.setItem('user_info', JSON.stringify(info));
+              
+              alert(verifyRes.data.message);
+              navigate('/select-character');
+            } catch (err) {
+              alert(err.response?.data?.detail || 'Payment verification failed.');
+            }
+          },
+          prefill: {
+            name: userInfo.full_name || 'User',
+            email: userInfo.email || '',
+          },
+          theme: { color: "#e91e8c" },
+        };
+        
+        const rzp = new window.Razorpay(options);
+        rzp.on('payment.failed', function (response) {
+          alert("Payment Failed: " + response.error.description);
         });
-        const info = JSON.parse(localStorage.getItem('user_info') || '{}');
-        info.plan_name = plan.plan_name;
-        info.credits_remaining = plan.monthly_credits;
-        info.is_unlimited = plan.is_unlimited;
-        localStorage.setItem('user_info', JSON.stringify(info));
-        alert(`✅ (Dev Mode) Upgraded to ${plan.display_name}!`);
-        navigate('/select-character');
-        return;
+        rzp.open();
       }
-
-      // Real Razorpay checkout
-      const options = {
-        key: key_id, amount, currency: res.data.currency,
-        name: brand.name, description: `${plan.display_name} Plan`,
-        order_id,
-        handler: async (response) => {
-          await API.post('/api/payment/verify', {
-            razorpay_order_id: response.razorpay_order_id,
-            razorpay_payment_id: response.razorpay_payment_id,
-            razorpay_signature: response.razorpay_signature,
-            plan_id: plan.id,
-          });
-          navigate('/select-character');
-        },
-        theme: { color: '#e91e8c' },
-      };
-      const rzp = new window.Razorpay(options);
-      rzp.open();
     } catch (e) {
-      alert(e.response?.data?.detail || 'Payment failed. Try again.');
+      alert(e.response?.data?.detail || e.message || 'Payment initiation failed.');
     }
-    setLoading(false);
+    setLoadingPlanName(null);
   };
 
   const PLAN_COLORS = { free: '#888', starter: '#2196f3', pro: '#9c27b0', elite: '#ffd700' };
@@ -92,26 +122,21 @@ export default function Pricing() {
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 20 }}>
           {plans.length === 0 ? (
-            [
-              { id: 1, plan_name: 'free', display_name: 'Free', price_monthly: 0, monthly_credits: 50, is_unlimited: false },
-              { id: 2, plan_name: 'starter', display_name: 'Starter', price_monthly: 199, monthly_credits: 500, is_unlimited: false },
-              { id: 3, plan_name: 'pro', display_name: 'Pro', price_monthly: 499, monthly_credits: 2000, is_unlimited: false },
-              { id: 4, plan_name: 'elite', display_name: 'Elite', price_monthly: 999, monthly_credits: 999999, is_unlimited: true },
-            ].map(plan => <PlanCard key={plan.id} plan={plan} colors={PLAN_COLORS} icons={PLAN_ICONS} onSubscribe={handleSubscribe} loading={loading} />)
+            <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: 40, color: '#888' }}>Loading plans...</div>
           ) : (
-            plans.map(plan => <PlanCard key={plan.id} plan={plan} colors={PLAN_COLORS} icons={PLAN_ICONS} onSubscribe={handleSubscribe} loading={loading} />)
+            plans.map(plan => <PlanCard key={plan.id} plan={plan} colors={PLAN_COLORS} icons={PLAN_ICONS} onSubscribe={handleSubscribe} loading={loadingPlanName === plan.plan_name} anyLoading={loadingPlanName !== null} />)
           )}
         </div>
 
         <p style={{ textAlign: 'center', color: '#444', fontSize: 13, marginTop: 40 }}>
-          Payments are secured by Razorpay · INR pricing · Cancel anytime
+          Payments are secured by {gatewayConfig.gateway === 'stripe' ? 'Stripe' : 'Razorpay'} · Cancel anytime
         </p>
       </div>
     </div>
   );
 }
 
-function PlanCard({ plan, colors, icons, onSubscribe, loading }) {
+function PlanCard({ plan, colors, icons, onSubscribe, loading, anyLoading }) {
   const color = colors[plan.plan_name] || '#888';
   const icon = icons[plan.plan_name] || '💎';
   const currentPlan = JSON.parse(localStorage.getItem('user_info') || '{}')?.plan_name;
@@ -139,7 +164,7 @@ function PlanCard({ plan, colors, icons, onSubscribe, loading }) {
         </div>
         <div style={{ color: '#555', fontSize: 12 }}>{plan.is_unlimited ? 'Unlimited credits' : 'credits per month'}</div>
       </div>
-      <button onClick={() => onSubscribe(plan)} disabled={loading || isCurrent}
+      <button onClick={() => onSubscribe(plan)} disabled={anyLoading || isCurrent}
         style={{ width: '100%', padding: '12px', borderRadius: 10, border: 'none', fontWeight: 700, cursor: isCurrent ? 'default' : 'pointer',
           background: isCurrent ? 'rgba(255,255,255,0.05)' : `linear-gradient(135deg,${color},${color}cc)`,
           color: isCurrent ? '#555' : plan.plan_name === 'elite' ? '#000' : '#fff', fontSize: 14 }}>

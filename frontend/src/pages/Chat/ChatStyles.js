@@ -2,6 +2,10 @@ const styles = {
   container: {
     height: "100vh",
     backgroundColor: "#fff",
+    display: "flex",
+    flexDirection: "row",
+    overflow: "hidden",
+    position: "relative",
   },
 
   chatBox: {

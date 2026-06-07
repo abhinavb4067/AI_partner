@@ -55,3 +55,17 @@ def create_user_token(user_id: str) -> str:
 def create_admin_token(admin_id: int) -> str:
     """Create a JWT for an admin. Claim key: 'sub_admin'."""
     return create_access_token({"sub_admin": str(admin_id), "type": "admin"})
+
+def create_reset_token(email: str) -> str:
+    """Create a short-lived token for password resets."""
+    return create_access_token({"sub": email, "type": "reset"}, expires_delta=timedelta(minutes=15))
+
+def verify_reset_token(token: str) -> Optional[str]:
+    """Verify a reset token and return the email if valid."""
+    try:
+        payload = decode_token(token)
+        if payload.get("type") == "reset":
+            return payload.get("sub")
+    except Exception:
+        pass
+    return None

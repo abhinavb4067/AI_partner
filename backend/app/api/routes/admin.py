@@ -46,6 +46,49 @@ async def get_stats(
         "active_subscriptions": active_subs,
     }
 
+@router.get("/stats/charts")
+async def get_stats_charts(
+    days: int = Query(7, ge=1, le=30),
+    _: AdminUser = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    from datetime import timedelta
+    today = datetime.utcnow().date()
+    start_date = today - timedelta(days=days - 1)
+    
+    # Revenue per day
+    revenue_data = db.query(
+        func.date(Payment.created_at).label('date'),
+        func.sum(Payment.amount).label('revenue')
+    ).filter(
+        Payment.status == "success",
+        func.date(Payment.created_at) >= start_date
+    ).group_by(func.date(Payment.created_at)).all()
+    
+    # New users per day
+    users_data = db.query(
+        func.date(UserAccount.created_at).label('date'),
+        func.count(UserAccount.id).label('new_users')
+    ).filter(
+        func.date(UserAccount.created_at) >= start_date
+    ).group_by(func.date(UserAccount.created_at)).all()
+    
+    # Format data
+    chart_data = []
+    for i in range(days):
+        current_date = start_date + timedelta(days=i)
+        
+        rev = next((float(r.revenue) for r in revenue_data if r.date == current_date), 0.0)
+        users = next((u.new_users for u in users_data if u.date == current_date), 0)
+        
+        chart_data.append({
+            "date": current_date.strftime("%b %d"),
+            "revenue": round(rev, 2),
+            "new_users": users
+        })
+        
+    return chart_data
+
 
 # ── Users ─────────────────────────────────────────────────────────────────────
 

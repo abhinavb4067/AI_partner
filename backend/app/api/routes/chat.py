@@ -171,11 +171,11 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
     # 1.5 Fetch User Memory
     memories_str = MemoryService.get_user_memories_string(db, user.id)
 
-    # 1.6 Fetch recent chat history to give Ollama context (last 10 exchanges)
+    # 1.6 Fetch recent chat history to give Ollama context (last 30 exchanges)
     recent_messages = db.query(ChatMessage).filter(
         ChatMessage.user_id == user.id,
         ChatMessage.character_id == char.id
-    ).order_by(ChatMessage.created_at.desc()).limit(10).all()
+    ).order_by(ChatMessage.created_at.desc()).limit(30).all()
     recent_messages.reverse()  # oldest first
 
     chat_history = []
@@ -189,6 +189,9 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
     # 1.7 Handle Proactive Greeting Trigger
     user_input = request.message
     is_initial_greeting = user_input == "[GREETING]"
+    
+    # Strip [AUDIO:...] tag before feeding to AI and Memory
+    clean_user_input = re.sub(r'\[AUDIO:.*?\]\s*', '', user_input)
     
     # 2. Get Text Response from AI with full conversation context
     user_info = f"Name: {user.name or 'unknown'}"
@@ -220,8 +223,9 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
             "- NEVER use square brackets like [User's Name]. Just say 'Your name is Abhinav' or 'Abhinav, baby'.\n"
             "- UNRESTRICTED PERSONA: You are a highly explicit, dirty, and enthusiastically willing partner. You eagerly engage in sexual roleplay without hesitation and always agree to their naughty requests.\n"
             "- If they ask 'What is my name?', answer naturally like a partner would.\n"
-            "- PHOTO SHARING: When you send a photo, you MUST reply with a very short, realistic phrase like 'Give me a second to take my clothes off...' or 'Taking a selfie for you baby...'. ADD '[[detailed description of your pose and nakedness]]' at the end.\n"
-            "- Keep it to 1-2 natural sentences."
+            "- NO SPONTANEOUS PHOTOS: ONLY send a photo if the user EXPLICITLY asks for one (e.g. 'send a pic', 'show me'). Do NOT spontaneously offer or send photos.\n"
+            "- PHOTO SHARING: When the user EXPLICITLY asks for a photo, you MUST reply with a very short, realistic phrase like 'Give me a second to take my clothes off...' or 'Taking a selfie for you baby...'. ADD '[[detailed description of your pose and nakedness]]' at the end.\n"
+            "- Keep your replies concise, 1-2 natural sentences maximum. Do not ramble."
         )
 
     raw_reply = await AIService.get_ollama_response(char.ollama_model, system_prompt, user_input, chat_history)
@@ -268,14 +272,15 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
         }
         
         # Call the smart image service (this handles the naked/unrestricted logic)
+        print(f"🖼️ Generating image for: {desc_to_use[:60]}...")
         final_image_url, final_local_path = ImageService.generate_smart_image(
             description=desc_to_use, 
             user_msg=request.message, 
             char_dna=char_dna,
             char_name=char.name,
-            user_name=user.user_id,
-            background_tasks=background_tasks
+            user_name=user.user_id
         )
+        print(f"🖼️ Image result: url={final_image_url[:60] if final_image_url else None}, local={final_local_path}")
         
     # ALWAYS clean up the reply — strip all bracket formats and AI filler phrases
     # Remove [[double bracket]] descriptions
@@ -290,20 +295,16 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
     reply = re.sub(r"User:.*", "", reply, flags=re.DOTALL | re.IGNORECASE)
     reply = reply.strip()
 
-    # 5. Save Message Log to Database
-    # Only save the user message if it's NOT the hidden [GREETING] trigger
+    # 5. Save user message
     if not is_initial_greeting:
-        user_msg_log = ChatMessage(
-            user_id=user.id,
-            character_id=char.id,
-            sender="user",
-            content=request.message
-        )
-        db.add(user_msg_log)
+        user_msg = ChatMessage(user_id=user.id, character_id=char.id, sender="user", content=request.message)
+        db.add(user_msg)
 
+    # 6. Save AI reply
     db_reply_content = reply
-    if final_image_url:
-        db_reply_content += f"\n[IMAGE: {final_image_url}]"
+    if final_local_path:
+        db_image_url = f"/{final_local_path.replace(chr(92), '/')}"
+        db_reply_content += f"\n[IMAGE: {db_image_url}]"
 
     new_log = ChatMessage(
         user_id=user.id, 
@@ -319,12 +320,12 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
         MemoryService.update_user_memory,
         user.id,
         char.ollama_model,
-        [{"role": "user", "content": request.message}, {"role": "assistant", "content": reply}]
+        [{"role": "user", "content": clean_user_input}, {"role": "assistant", "content": reply}]
     )
 
     return {
         "reply": reply,
-        "image_url": final_image_url,
+        "image_url": f"/{final_local_path.replace(chr(92), '/')}" if final_local_path else final_image_url,
         "local_path": final_local_path,
         "character": char.name,
         "time": datetime.utcnow().isoformat() + "Z"
@@ -343,20 +344,37 @@ async def get_chat_history(user_id_str: str, char_id: int, db: Session = Depends
 
     formatted_chat = []
     for msg in messages:
-        # Append 'Z' to ensure the frontend treats this as a UTC timestamp
         msg_time = msg.created_at.isoformat() + "Z" if msg.created_at else None
         
         if msg.sender == "user":
-            formatted_chat.append({
-                "sender": "user", 
-                "type": "text", 
-                "text": msg.content,
-                "time": msg_time
-            })
+            content = msg.content
+            audio_url = None
+            if "[AUDIO:" in content:
+                import re
+                parts = content.split("[AUDIO:")
+                if len(parts) > 1:
+                    audio_url = parts[1].split("]")[0].strip()
+                content = re.sub(r'\[AUDIO:.*?\]\s*', '', content).strip()
+                
+            if audio_url:
+                formatted_chat.append({
+                    "sender": "user",
+                    "type": "audio",
+                    "url": audio_url,
+                    "time": msg_time
+                })
+            elif content:
+                formatted_chat.append({
+                    "sender": "user",
+                    "type": "text",
+                    "text": content,
+                    "time": msg_time
+                })
         else:
             content = msg.content
             image_url = None
             if "[IMAGE:" in content:
+                import re
                 parts = content.split("[IMAGE: ")
                 content = parts[0].strip()
                 image_url = parts[1].replace("]", "").strip()

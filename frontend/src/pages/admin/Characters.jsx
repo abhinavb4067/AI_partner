@@ -6,7 +6,7 @@ const SKIN_COLORS = ['Fair', 'Light', 'Medium', 'Olive', 'Tan', 'Brown', 'Dark']
 
 const DEFAULT_FORM = {
   name: '', slug: '', gender: 'female', age_display: '', skin_color: '', body_shape: '',
-  hair_color: '', eye_color: '', personality_prompt: '', identity_dna: '', body_dna: '',
+  hair_color: '', eye_color: '', personality_prompt: '', identity_dna: '', body_dna: '', about: 'Available',
   ollama_model: 'dolphin-llama3:8b', plan_id: '', voice_enabled: false,
   elevenlabs_voice_id: '', is_active: true,
 };
@@ -130,7 +130,7 @@ function CharacterModal({ char, plans, onClose, onSave }) {
   const [form, setForm] = useState(char ? {
     name: char.name, slug: char.slug, gender: char.gender, age_display: char.age_display || '',
     skin_color: char.skin_color || '', body_shape: char.body_shape || '',
-    hair_color: char.hair_color || '', eye_color: char.eye_color || '',
+    hair_color: char.hair_color || '', eye_color: char.eye_color || '', about: char.about || 'Available',
     personality_prompt: char.personality_prompt || '', identity_dna: char.identity_dna || '',
     body_dna: char.body_dna || '', ollama_model: char.ollama_model || 'dolphin-llama3:8b',
     plan_id: char.plan_id || '', voice_enabled: char.voice_enabled || false,
@@ -198,9 +198,9 @@ function CharacterModal({ char, plans, onClose, onSave }) {
 
         {/* Tabs */}
         <div style={{ display: 'flex', gap: 8, padding: '14px 24px 0', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-          {['basic', 'appearance', 'ai', 'voice'].map(tab => (
+          {['basic', 'appearance', 'ai', 'voice', 'posts'].map(tab => (
             <button key={tab} style={TAB_STYLE(activeTab === tab)} onClick={() => setActiveTab(tab)}>
-              {tab === 'basic' ? '📝 Basic' : tab === 'appearance' ? '💄 Appearance' : tab === 'ai' ? '🤖 AI/Prompt' : '🎤 Voice'}
+              {tab === 'basic' ? '📝 Basic' : tab === 'appearance' ? '💄 Appearance' : tab === 'ai' ? '🤖 AI/Prompt' : tab === 'voice' ? '🎤 Voice' : '📸 Media & Posts'}
             </button>
           ))}
         </div>
@@ -236,12 +236,25 @@ function CharacterModal({ char, plans, onClose, onSave }) {
                 </select>
               </div>
               <div><label style={labelStyle}>Age (Display)</label><input style={inputStyle} type="number" value={form.age_display} onChange={e => set('age_display', e.target.value)} placeholder="25" /></div>
+              <div><label style={labelStyle}>About</label><input style={inputStyle} value={form.about} onChange={e => set('about', e.target.value)} placeholder="Available" /></div>
               <div><label style={labelStyle}>Plan Required</label>
                 <select style={inputStyle} value={form.plan_id} onChange={e => set('plan_id', e.target.value)}>
                   <option value="">Free (All users)</option>
                   {plans.map(p => <option key={p.id} value={p.id}>{p.display_name || p.plan_name}</option>)}
                 </select>
               </div>
+            </div>
+          )}
+
+          {activeTab === 'posts' && (
+            <div>
+              {!char ? (
+                <div style={{ color: '#888', textAlign: 'center', padding: 30 }}>
+                  Save the character first to add media and posts.
+                </div>
+              ) : (
+                <CharacterPostsTab charId={char.id} />
+              )}
             </div>
           )}
 
@@ -332,6 +345,86 @@ function CharacterModal({ char, plans, onClose, onSave }) {
             {saving ? 'Saving...' : char ? 'Save Changes' : 'Create Character'}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function CharacterPostsTab({ charId }) {
+  const [posts, setPosts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [isPremium, setIsPremium] = useState(true);
+  const fileRef = useRef();
+
+  const fetchPosts = () => {
+    adminAPI.get(`/api/admin/characters/${charId}/posts`).then(r => {
+      setPosts(r.data);
+      setLoading(false);
+    }).catch(e => {
+      console.error(e);
+      setLoading(false);
+    });
+  };
+
+  useEffect(() => {
+    fetchPosts();
+  }, [charId]);
+
+  const handleUpload = async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const fd = new FormData();
+    fd.append("file", f);
+    fd.append("is_premium", isPremium);
+    try {
+      await adminAPI.post(`/api/admin/characters/${charId}/posts`, fd, { headers: { 'Content-Type': 'multipart/form-data' }});
+      fetchPosts();
+    } catch(err) {
+      alert("Failed to upload: " + (err.response?.data?.detail || err.message));
+    }
+  };
+
+  const handleDelete = async (postId) => {
+    if(!window.confirm("Delete this post?")) return;
+    try {
+      await adminAPI.delete(`/api/admin/characters/posts/${postId}`);
+      fetchPosts();
+    } catch(err) {
+      alert("Failed to delete post");
+    }
+  }
+
+  if (loading) return <div style={{ color: '#888' }}>Loading posts...</div>;
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 20, background: '#1a1a26', padding: 15, borderRadius: 8 }}>
+        <div style={{ flex: 1 }}>
+          <label style={{ color: '#888', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+            <input type="checkbox" checked={isPremium} onChange={e => setIsPremium(e.target.checked)} />
+            Premium Content (Requires Subscription)
+          </label>
+        </div>
+        <button onClick={() => fileRef.current?.click()} style={{ padding: '8px 16px', borderRadius: 8, background: '#00a884', color: '#111', border: 'none', fontWeight: 600, cursor: 'pointer' }}>
+          Upload Media
+        </button>
+        <input ref={fileRef} type="file" accept="image/*,video/*" style={{ display: 'none' }} onChange={handleUpload} />
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 12 }}>
+        {posts.map(p => (
+          <div key={p.id} style={{ position: 'relative', height: 120, borderRadius: 8, overflow: 'hidden', border: p.is_premium ? '2px solid #e91e8c' : '2px solid transparent' }}>
+            {p.media_type === 'video' ? (
+              <video src={`${import.meta.env.VITE_API_URL}${p.media_url}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            ) : (
+              <img src={`${import.meta.env.VITE_API_URL}${p.media_url}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
+            )}
+            {p.is_premium && <div style={{ position: 'absolute', top: 4, left: 4, background: '#e91e8c', color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 4, fontWeight: 'bold' }}>PREMIUM</div>}
+            {p.media_type === 'video' && <div style={{ position: 'absolute', bottom: 4, left: 4, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 4 }}>VIDEO</div>}
+            <button onClick={() => handleDelete(p.id)} style={{ position: 'absolute', top: 4, right: 4, background: 'rgba(0,0,0,0.6)', color: '#fff', border: 'none', borderRadius: '50%', width: 24, height: 24, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+          </div>
+        ))}
+        {posts.length === 0 && <div style={{ color: '#555', gridColumn: '1 / -1', padding: 20, textAlign: 'center' }}>No media uploaded yet.</div>}
       </div>
     </div>
   );

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { GoogleLogin } from '@react-oauth/google';
 import brand from '../config/brand';
 import API from '../api/api';
 
@@ -27,6 +28,26 @@ export default function Register() {
   };
 
   const pw = strength(form.password);
+
+  const handleGoogleSuccess = async (credentialResponse) => {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await API.post('/api/auth/google-login', { credential: credentialResponse.credential });
+      const d = res.data;
+      localStorage.setItem('token', d.access_token);
+      localStorage.setItem('user_id', d.user_id);
+      localStorage.setItem('user_name', d.name);
+      localStorage.setItem('user_info', JSON.stringify({
+        email: d.email, name: d.name, plan_name: d.plan_name,
+        credits_remaining: d.credits_remaining, is_unlimited: d.is_unlimited,
+      }));
+      navigate('/select-character');
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Google Login failed');
+    }
+    setLoading(false);
+  };
 
   const handleRegister = async (e) => {
     e.preventDefault();
@@ -112,6 +133,22 @@ export default function Register() {
             color: '#fff', fontSize: 15, fontWeight: 600, cursor: 'pointer', opacity: loading ? 0.6 : 1 }}>
             {loading ? 'Creating account...' : 'Create Free Account'}
           </button>
+
+          <div style={{ display: 'flex', alignItems: 'center', margin: '16px 0' }}>
+            <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.05)' }} />
+            <span style={{ padding: '0 12px', color: '#555', fontSize: 12 }}>OR</span>
+            <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.05)' }} />
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'center' }}>
+            <GoogleLogin
+              onSuccess={handleGoogleSuccess}
+              onError={() => setError('Google Login Failed')}
+              theme="filled_black"
+              shape="rectangular"
+              text="signup_with"
+            />
+          </div>
 
           <p style={{ textAlign: 'center', color: '#555', fontSize: 13, marginTop: 4 }}>
             Already have an account?{' '}

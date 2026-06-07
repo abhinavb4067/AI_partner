@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { GoogleLogin } from '@react-oauth/google';
 import brand from '../config/brand';
 import API from '../api/api';
 
@@ -9,6 +10,26 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const navigate = useNavigate();
+
+  const handleGoogleSuccess = async (credentialResponse) => {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await API.post('/api/auth/google-login', { credential: credentialResponse.credential });
+      const d = res.data;
+      localStorage.setItem('token', d.access_token);
+      localStorage.setItem('user_id', d.user_id);
+      localStorage.setItem('user_name', d.name);
+      localStorage.setItem('user_info', JSON.stringify({
+        email: d.email, name: d.name, plan_name: d.plan_name,
+        credits_remaining: d.credits_remaining, is_unlimited: d.is_unlimited,
+      }));
+      navigate('/select-character');
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Google Login failed');
+    }
+    setLoading(false);
+  };
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -79,6 +100,10 @@ export default function Login() {
                 value={password} onChange={e => setPassword(e.target.value)} required />
             </div>
 
+            <div style={{ textAlign: 'right', marginTop: -6, marginBottom: 6 }}>
+              <Link to="/forgot-password" style={{ color: '#888', fontSize: 12, textDecoration: 'none' }}>Forgot password?</Link>
+            </div>
+
             {error && (
               <div style={{ background: 'rgba(233,30,140,0.1)', border: '1px solid rgba(233,30,140,0.3)',
                 borderRadius: 8, padding: '11px 14px', color: '#e91e8c', fontSize: 13 }}>{error}</div>
@@ -88,6 +113,22 @@ export default function Login() {
               {loading ? 'Signing in...' : 'Sign In'}
             </button>
           </form>
+
+          <div style={{ display: 'flex', alignItems: 'center', margin: '24px 0' }}>
+            <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.05)' }} />
+            <span style={{ padding: '0 12px', color: '#555', fontSize: 12 }}>OR</span>
+            <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.05)' }} />
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'center' }}>
+            <GoogleLogin
+              onSuccess={handleGoogleSuccess}
+              onError={() => setError('Google Login Failed')}
+              theme="filled_black"
+              shape="rectangular"
+              text="signin_with"
+            />
+          </div>
 
           <p style={{ textAlign: 'center', color: '#555', fontSize: 14, marginTop: 24 }}>
             Don't have an account?{' '}

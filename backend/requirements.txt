@@ -17,6 +17,9 @@ requests
 
 # Payment
 razorpay
+stripe
 
 # Existing
 aiohttp
+faster-whisper
+imageio-ffmpeg

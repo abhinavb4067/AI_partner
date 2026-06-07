@@ -43,6 +43,24 @@ export default function Profile() {
               borderRadius: 10, color: tab === i ? '#e91e8c' : '#666', cursor: 'pointer', fontSize: 14, fontWeight: 500,
             }}>{t}</button>
           ))}
+          <div style={{ marginTop: 24, marginBottom: 8, borderTop: '1px solid rgba(255,255,255,0.06)' }} />
+          <button 
+            onClick={() => {
+              localStorage.removeItem('user_token');
+              localStorage.removeItem('user_info');
+              localStorage.removeItem('user_name');
+              navigate('/login');
+            }} 
+            style={{
+              padding: '11px 16px', textAlign: 'left', background: 'none', border: 'none',
+              borderRadius: 10, color: '#ef5350', cursor: 'pointer', fontSize: 14, fontWeight: 500,
+              transition: 'background 0.2s',
+            }}
+            onMouseEnter={e => e.currentTarget.style.background = 'rgba(239, 83, 80, 0.1)'}
+            onMouseLeave={e => e.currentTarget.style.background = 'none'}
+          >
+            Log Out
+          </button>
         </div>
 
         {/* Content */}

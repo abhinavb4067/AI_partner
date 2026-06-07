@@ -20,10 +20,11 @@ class AIService:
         payload = {
             "model": "nousresearch/hermes-3-llama-3.1-70b",
             "messages": messages,
-            "temperature": 0.8,
+            "temperature": 0.85,
             "max_tokens": 300,
             "top_p": 0.9,
-            "top_k": 20
+            "top_k": 20,
+            "repetition_penalty": 1.15
         }
         
         # Pulling the key securely from settings

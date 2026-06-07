@@ -27,6 +27,7 @@ const CharacterSelection = () => {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeFilter, setActiveFilter] = useState('All');
+  const [selectedAvatar, setSelectedAvatar] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -90,7 +91,20 @@ const CharacterSelection = () => {
             <span style={{ fontSize: 18, fontWeight: 600, color: '#e9edef', letterSpacing: '0.2px' }}>AI Companions</span>
           </div>
           <div style={{ display: 'flex', gap: 6 }}>
-            {[MessageSquarePlus, MoreVertical].map((Icon, i) => (
+            <button
+              onClick={() => navigate('/profile')}
+              title="My Profile"
+              style={{
+                background: 'none', border: 'none', color: '#8696a0', cursor: 'pointer',
+                padding: 7, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                transition: 'background 0.15s, color 0.15s',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; e.currentTarget.style.color = '#e9edef'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = '#8696a0'; }}
+            >
+              <div style={{ fontSize: 16 }}>👤</div>
+            </button>
+            {/* {[MessageSquarePlus, MoreVertical].map((Icon, i) => (
               <button key={i} style={{
                 background: 'none', border: 'none', color: '#8696a0', cursor: 'pointer',
                 padding: 7, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -101,7 +115,7 @@ const CharacterSelection = () => {
               >
                 <Icon size={19} />
               </button>
-            ))}
+            ))} */}
           </div>
         </div>
 
@@ -167,7 +181,12 @@ const CharacterSelection = () => {
                   onMouseLeave={e => e.currentTarget.style.background = 'none'}
                 >
                   {/* Avatar */}
-                  <div style={{
+                  <div 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedAvatar(char);
+                    }}
+                    style={{
                     width: 48, height: 48, borderRadius: '50%', flexShrink: 0,
                     background: '#1a2632',
                     overflow: 'hidden',
@@ -175,7 +194,7 @@ const CharacterSelection = () => {
                     boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
                   }}>
                     <img 
-                      src={`/avatars/${char.name}.jpg`} 
+                      src={char.photo_url ? `${import.meta.env.VITE_API_URL}${char.photo_url}` : `/avatars/${char.name}.jpg`} 
                       alt={char.name} 
                       style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                       onError={(e) => {
@@ -195,6 +214,7 @@ const CharacterSelection = () => {
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 3 }}>
                       <p style={{ fontSize: 13.5, color: '#8696a0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, marginRight: 8 }}>
+                        {char.last_message_sender === 'user' && <span style={{ color: '#8696a0', marginRight: 4 }}>You:</span>}
                         {char.last_message}
                       </p>
                       <div style={{
@@ -290,6 +310,52 @@ const CharacterSelection = () => {
           }
         `}</style>
       </div>
+
+      {/* ── Avatar Modal (WhatsApp style DP popup) ── */}
+      {selectedAvatar && (
+        <div 
+          onClick={() => setSelectedAvatar(null)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999
+          }}
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            style={{ 
+              background: '#111b21', padding: '24px', borderRadius: '12px', 
+              width: '90%', maxWidth: '360px', textAlign: 'center',
+              boxShadow: '0 8px 32px rgba(0,0,0,0.5)'
+            }}
+          >
+            <div style={{ width: 250, height: 250, margin: '0 auto 20px', borderRadius: '50%', overflow: 'hidden', border: '4px solid #1f2c34' }}>
+              <img 
+                src={selectedAvatar.photo_url ? `${import.meta.env.VITE_API_URL}${selectedAvatar.photo_url}` : `/avatars/${selectedAvatar.name}.jpg`}
+                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                alt={selectedAvatar.name}
+              />
+            </div>
+            <h2 style={{ color: '#e9edef', fontSize: 24, margin: '0 0 8px 0', fontWeight: 600 }}>{selectedAvatar.name}</h2>
+            <p style={{ color: '#8696a0', fontSize: 14, marginBottom: 24 }}>{selectedAvatar.about || "Available"}</p>
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+              <button 
+                onClick={() => navigate(`/chat/${selectedAvatar.id}`)}
+                style={{
+                  background: '#00a884', color: '#111b21', border: 'none', 
+                  padding: '12px 24px', borderRadius: '8px', fontWeight: 700, 
+                  cursor: 'pointer', fontSize: 15, display: 'flex', alignItems: 'center', gap: 8,
+                  transition: 'background 0.2s'
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = '#00cf9d'}
+                onMouseLeave={e => e.currentTarget.style.background = '#00a884'}
+              >
+                <MessageSquarePlus size={18} />
+                Message
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -29,10 +29,18 @@ class Settings(BaseSettings):
     # ── AI ───────────────────────────────────────────────────────────────────
     OPENROUTER_API_KEY: str = ""
     OLLAMA_URL: str = "http://localhost:11434/api/chat"
+    FAL_API_KEY: str = ""
+
+    # ── Payment Gateway Config ───────────────────────────────────────────────
+    ACTIVE_PAYMENT_GATEWAY: str = "stripe"  # "stripe" or "razorpay"
 
     # ── Razorpay ─────────────────────────────────────────────────────────────
     RAZORPAY_KEY_ID: str = "rzp_test_DUMMY"
     RAZORPAY_KEY_SECRET: str = "rzp_test_DUMMY_SECRET"
+
+    # ── Stripe ───────────────────────────────────────────────────────────────
+    STRIPE_PUBLISHABLE_KEY: str = "pk_test_DUMMY"
+    STRIPE_SECRET_KEY: str = "sk_test_DUMMY"
 
     # ── ElevenLabs ───────────────────────────────────────────────────────────
     ELEVENLABS_API_KEY: str = "sk_elevenlabs_DUMMY"
@@ -42,7 +50,7 @@ class Settings(BaseSettings):
     MEDIA_FOLDER: str = "media"
 
     # ── CORS ─────────────────────────────────────────────────────────────────
-    CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
+    CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000"
 
     @property
     def cors_origins_list(self) -> List[str]:
