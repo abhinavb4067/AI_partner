@@ -13,6 +13,8 @@ from app.api.deps import get_current_user
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 from app.core.config import settings
+import resend
+import os
 
 router = APIRouter()
 
@@ -139,7 +141,35 @@ async def forgot_password(req: ForgotPasswordRequest, db: Session = Depends(get_
         return {"message": "If that email is in our system, we sent a reset link."}
     
     token = create_reset_token(user.user_id)
-    print(f"\n\n--- PASSWORD RESET LINK (Testing) ---\nhttp://localhost:5173/reset-password?token={token}\n--------------------------------------\n\n")
+    reset_link = f"http://localhost:5173/reset-password?token={token}"
+
+    if settings.RESEND_API_KEY:
+        resend.api_key = settings.RESEND_API_KEY
+        
+        template_path = os.path.join(os.path.dirname(__file__), "..", "..", "templates", "emails", "reset_password.html")
+        try:
+            with open(template_path, "r", encoding="utf-8") as f:
+                html_content = f.read()
+            html_content = html_content.replace("{{ reset_link }}", reset_link)
+            html_content = html_content.replace("{{ current_year }}", str(datetime.utcnow().year))
+        except FileNotFoundError:
+            # Fallback if template is missing
+            html_content = f"<p>Hello,</p><p>You requested a password reset. Click the link below to set a new password:</p><p><a href='{reset_link}'>Reset Password</a></p><p>If you didn't request this, you can safely ignore this email.</p>"
+        
+        try:
+            resend.Emails.send({
+                "from": "DreamDate AI <onboarding@resend.dev>",
+                "to": [req.email],
+                "subject": "Reset your DreamDate AI Password",
+                "html": html_content
+            })
+            print(f"Password reset email sent to {req.email}")
+        except Exception as e:
+            print(f"Failed to send email: {e}")
+            print(f"\n\n--- PASSWORD RESET LINK (Fallback) ---\n{reset_link}\n--------------------------------------\n\n")
+    else:
+        print(f"\n\n--- PASSWORD RESET LINK (Testing) ---\n{reset_link}\n--------------------------------------\n\n")
+        
     return {"message": "If that email is in our system, we sent a reset link."}
 
 @router.post("/reset-password")

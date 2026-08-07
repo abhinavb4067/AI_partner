@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     OLLAMA_URL: str = "http://localhost:11434/api/chat"
     FAL_API_KEY: str = ""
 
+    # ── Email Delivery (Resend) ──────────────────────────────────────────────
+    RESEND_API_KEY: str = ""
+
     # ── Payment Gateway Config ───────────────────────────────────────────────
     ACTIVE_PAYMENT_GATEWAY: str = "stripe"  # "stripe" or "razorpay"
 

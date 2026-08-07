@@ -23,3 +23,4 @@ stripe
 aiohttp
 faster-whisper
 imageio-ffmpeg
+resend
