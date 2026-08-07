@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     # ── Email Delivery (Resend) ──────────────────────────────────────────────
     RESEND_API_KEY: str = ""
 
+    # ── Google OAuth ─────────────────────────────────────────────────────────
+    GOOGLE_CLIENT_ID: str = ""
+
     # ── Payment Gateway Config ───────────────────────────────────────────────
     ACTIVE_PAYMENT_GATEWAY: str = "stripe"  # "stripe" or "razorpay"
 
