@@ -53,7 +53,7 @@ export default function Login() {
   };
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', fontFamily: "'Inter', system-ui, sans-serif",
+    <div className="login-container" style={{ minHeight: '100vh', display: 'flex', fontFamily: "'Inter', system-ui, sans-serif",
       background: 'linear-gradient(135deg, #0a0a0f 0%, #12091a 50%, #0a0a0f 100%)' }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
         .auth-input { width:100%;padding:13px 16px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);
@@ -62,6 +62,10 @@ export default function Login() {
         .auth-btn{width:100%;padding:14px;background:linear-gradient(135deg,#e91e8c,#9c27b0);border:none;border-radius:10px;
           color:#fff;font-size:15px;font-weight:600;cursor:pointer;transition:opacity 0.2s;}
         .auth-btn:hover:not(:disabled){opacity:0.9;} .auth-btn:disabled{opacity:0.6;cursor:not-allowed;}
+        @media (max-width: 768px) {
+          .hidden-mobile { display: none !important; }
+          .form-panel { width: 100% !important; padding: 40px 24px !important; }
+        }
       `}</style>
 
       {/* Left — Branding */}
@@ -83,7 +87,7 @@ export default function Login() {
       </div>
 
       {/* Right — Form */}
-      <div style={{ width: 440, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 40 }}>
+      <div className="form-panel" style={{ width: 440, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 40 }}>
         <div style={{ width: '100%' }}>
           <h2 style={{ fontSize: 28, fontWeight: 700, color: '#f0f0f0', marginBottom: 6 }}>Welcome back</h2>
           <p style={{ color: '#666', fontSize: 14, marginBottom: 32 }}>Sign in to continue your conversations</p>
