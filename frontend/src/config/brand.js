@@ -5,14 +5,14 @@
  * Every page, navbar, footer, and title tag imports from here.
  */
 const brand = {
-  name: "DreamDate AI",              // ← Change this to your final brand name
-  shortName: "DreamDate",            // ← Used in compact spaces (navbar logo)
+  name: "Avoiga",              // ← Change this to your final brand name
+  shortName: "Avoiga",            // ← Used in compact spaces (navbar logo)
   tagline: "Your perfect AI companion, always there for you.",
   description: "Connect with beautiful, intelligent AI companions. Chat, share photos, and build genuine connections — available 24/7.",
-  email: "hello@dreamdate.ai",
-  supportEmail: "support@dreamdate.ai",
-  twitter: "@dreamdateai",
-  instagram: "@dreamdateai",
+  email: "hello@avoiga.ectama.com",
+  supportEmail: "support@avoiga.ectama.com",
+  twitter: "@avoiga",
+  instagram: "@avoiga",
   year: new Date().getFullYear(),
 
   // Color palette (CSS variables — also used inline)

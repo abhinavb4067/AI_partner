@@ -11,7 +11,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     # ── Application ──────────────────────────────────────────────────────────
-    PROJECT_NAME: str = "DreamDate AI"
+    PROJECT_NAME: str = "Avoiga"
     VERSION: str = "2.0.0"
 
     # ── Database ─────────────────────────────────────────────────────────────
@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 10080  # 7 days
 
     # ── Admin Seed ───────────────────────────────────────────────────────────
-    ADMIN_EMAIL: str = "admin@dreamdate.ai"
+    ADMIN_EMAIL: str = "admin@avoiga.ectama.com"
     ADMIN_PASSWORD: str = "Admin@123"
 
     # ── AI ───────────────────────────────────────────────────────────────────

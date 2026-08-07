@@ -158,9 +158,9 @@ async def forgot_password(req: ForgotPasswordRequest, db: Session = Depends(get_
         
         try:
             resend.Emails.send({
-                "from": "DreamDate AI <onboarding@resend.dev>",
+                "from": "Avoiga <onboarding@resend.dev>",
                 "to": [req.email],
-                "subject": "Reset your DreamDate AI Password",
+                "subject": "Reset your Avoiga Password",
                 "html": html_content
             })
             print(f"Password reset email sent to {req.email}")
