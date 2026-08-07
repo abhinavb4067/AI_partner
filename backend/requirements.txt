@@ -9,6 +9,7 @@ python-multipart
 # Auth
 python-jose[cryptography]
 passlib[bcrypt]
+google-auth
 
 # AI / Image
 httpx
