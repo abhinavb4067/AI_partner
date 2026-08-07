@@ -152,15 +152,16 @@ async def forgot_password(req: ForgotPasswordRequest, db: Session = Depends(get_
                 html_content = f.read()
             html_content = html_content.replace("{{ reset_link }}", reset_link)
             html_content = html_content.replace("{{ current_year }}", str(datetime.utcnow().year))
+            html_content = html_content.replace("{{ project_name }}", settings.PROJECT_NAME)
         except FileNotFoundError:
             # Fallback if template is missing
             html_content = f"<p>Hello,</p><p>You requested a password reset. Click the link below to set a new password:</p><p><a href='{reset_link}'>Reset Password</a></p><p>If you didn't request this, you can safely ignore this email.</p>"
         
         try:
             resend.Emails.send({
-                "from": "Avoiga <onboarding@resend.dev>",
+                "from": f"{settings.PROJECT_NAME} <onboarding@resend.dev>",
                 "to": [req.email],
-                "subject": "Reset your Avoiga Password",
+                "subject": f"Reset your {settings.PROJECT_NAME} Password",
                 "html": html_content
             })
             print(f"Password reset email sent to {req.email}")
