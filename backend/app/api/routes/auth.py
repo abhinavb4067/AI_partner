@@ -141,7 +141,7 @@ async def forgot_password(req: ForgotPasswordRequest, db: Session = Depends(get_
         return {"message": "If that email is in our system, we sent a reset link."}
     
     token = create_reset_token(user.user_id)
-    reset_link = f"http://localhost:5173/reset-password?token={token}"
+    reset_link = f"{settings.FRONTEND_URL.rstrip('/')}/reset-password?token={token}"
 
     if settings.RESEND_API_KEY:
         resend.api_key = settings.RESEND_API_KEY

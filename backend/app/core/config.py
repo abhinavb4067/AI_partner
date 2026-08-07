@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     # ── Application ──────────────────────────────────────────────────────────
     PROJECT_NAME: str = "Avoiga"
     VERSION: str = "2.0.0"
+    FRONTEND_URL: str = "http://localhost:5173"
 
     # ── Database ─────────────────────────────────────────────────────────────
     DATABASE_URL: str = "postgresql://postgres:password@localhost:5432/postgres"
