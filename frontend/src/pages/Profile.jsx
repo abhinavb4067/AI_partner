@@ -24,6 +24,12 @@ export default function Profile() {
         .inp{width:100%;padding:12px 14px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:10px;color:#f0f0f0;font-size:14px;outline:none;box-sizing:border-box;}
         .inp:focus{border-color:#e91e8c;} .btn-primary{padding:12px 24px;background:linear-gradient(135deg,#e91e8c,#9c27b0);border:none;border-radius:10px;color:#fff;font-weight:600;cursor:pointer;font-size:14px;}
         .btn-ghost{padding:12px 24px;border:1px solid rgba(255,255,255,0.1);background:none;border-radius:10px;color:#888;cursor:pointer;font-size:14px;}
+        .profile-container { display: grid; grid-template-columns: 200px 1fr; }
+        @media (max-width: 768px) { 
+          .profile-container { display: flex; flex-direction: column; } 
+          .profile-tabs { flex-direction: row !important; white-space: nowrap; border-bottom: 1px solid rgba(255,255,255,0.06); }
+          .profile-tabs button { text-align: center !important; }
+        }
       `}</style>
 
       {/* Header */}
@@ -33,9 +39,9 @@ export default function Profile() {
         <div style={{ width: 60 }} />
       </div>
 
-      <div style={{ maxWidth: 720, margin: '0 auto', padding: '32px 20px', display: 'grid', gridTemplateColumns: '200px 1fr', gap: 24 }}>
+      <div className="profile-container" style={{ maxWidth: 720, margin: '0 auto', padding: '32px 20px', gap: 24 }}>
         {/* Sidebar */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, overflowX: 'auto', WebkitOverflowScrolling: 'touch', paddingBottom: '8px' }} className="profile-tabs">
           {TABS.map((t, i) => (
             <button key={t} onClick={() => setTab(i)} style={{
               padding: '11px 16px', textAlign: 'left', background: tab === i ? 'rgba(233,30,140,0.12)' : 'none',
