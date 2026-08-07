@@ -60,10 +60,22 @@ export default function Home() {
         .btn-primary:hover { opacity:0.9; transform:scale(1.02); }
         .btn-ghost { background:none; border:1px solid rgba(255,255,255,0.15); border-radius:12px; color:#ccc; cursor:pointer; transition:all 0.2s; }
         .btn-ghost:hover { border-color:rgba(233,30,140,0.4); color:#e91e8c; }
+        @media (max-width: 768px) {
+          .nav-bar { padding: 0 20px !important; }
+          .hero-section { padding: 60px 20px 40px !important; }
+          .hero-title { font-size: 46px !important; }
+          .hero-subtitle { font-size: 17px !important; }
+          .btn-group { flex-direction: column !important; width: 100%; gap: 12px !important; }
+          .btn-group button { width: 100% !important; }
+          .section-pad { padding: 60px 20px !important; }
+          .section-title { font-size: 28px !important; }
+          .cta-title { font-size: 36px !important; }
+          .char-card-grid { grid-template-columns: repeat(2, 1fr) !important; gap: 12px !important; }
+        }
       `}</style>
 
       {/* Navbar */}
-      <nav style={{ position: 'sticky', top: 0, zIndex: 100, background: 'rgba(10,10,15,0.9)', backdropFilter: 'blur(20px)',
+      <nav className="nav-bar" style={{ position: 'sticky', top: 0, zIndex: 100, background: 'rgba(10,10,15,0.9)', backdropFilter: 'blur(20px)',
         borderBottom: '1px solid rgba(255,255,255,0.06)', padding: '0 40px', display: 'flex', alignItems: 'center', height: 64 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1 }}>
           <span style={{ fontSize: 24 }}>💕</span>
@@ -87,21 +99,21 @@ export default function Home() {
       </nav>
 
       {/* Hero */}
-      <section style={{ padding: '100px 40px 80px', textAlign: 'center', maxWidth: 900, margin: '0 auto', position: 'relative' }}>
+      <section className="hero-section" style={{ padding: '100px 40px 80px', textAlign: 'center', maxWidth: 900, margin: '0 auto', position: 'relative' }}>
         <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at center, rgba(233,30,140,0.08) 0%, transparent 70%)', pointerEvents: 'none' }} />
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'rgba(233,30,140,0.1)',
           border: '1px solid rgba(233,30,140,0.2)', borderRadius: 20, padding: '6px 16px', marginBottom: 28, fontSize: 13, color: '#e91e8c' }}>
           ✨ AI-Powered Companions Available 24/7
         </div>
-        <h1 style={{ fontSize: 72, fontWeight: 900, lineHeight: 1.1, marginBottom: 24 }}>
+        <h1 className="hero-title" style={{ fontSize: 72, fontWeight: 900, lineHeight: 1.1, marginBottom: 24 }}>
           <span className="hero-gradient">Your Perfect</span>
           <br />
           <span style={{ color: '#f0f0f0' }}>AI Companion</span>
         </h1>
-        <p style={{ fontSize: 20, color: '#888', lineHeight: 1.7, marginBottom: 40, maxWidth: 600, margin: '0 auto 40px' }}>
+        <p className="hero-subtitle" style={{ fontSize: 20, color: '#888', lineHeight: 1.7, marginBottom: 40, maxWidth: 600, margin: '0 auto 40px' }}>
           {brand.description}
         </p>
-        <div style={{ display: 'flex', gap: 14, justifyContent: 'center', flexWrap: 'wrap' }}>
+        <div className="btn-group" style={{ display: 'flex', gap: 14, justifyContent: 'center', flexWrap: 'wrap' }}>
           <button className="btn-primary" onClick={() => navigate('/register')} style={{ padding: '16px 36px', fontSize: 17, borderRadius: 14 }}>
             Start Free — No Credit Card
           </button>
@@ -114,10 +126,10 @@ export default function Home() {
 
       {/* Characters Preview */}
       {characters.length > 0 && (
-        <section style={{ padding: '60px 40px', maxWidth: 1200, margin: '0 auto' }}>
-          <h2 style={{ textAlign: 'center', fontSize: 36, fontWeight: 800, marginBottom: 12 }}>Meet Your Companions</h2>
+        <section className="section-pad" style={{ padding: '60px 40px', maxWidth: 1200, margin: '0 auto' }}>
+          <h2 className="section-title" style={{ textAlign: 'center', fontSize: 36, fontWeight: 800, marginBottom: 12 }}>Meet Your Companions</h2>
           <p style={{ textAlign: 'center', color: '#666', marginBottom: 40, fontSize: 16 }}>Each one with a unique personality, waiting to connect with you</p>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 16 }}>
+          <div className="char-card-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 16 }}>
             {characters.map(char => (
               <div key={char.id} className="char-card" onClick={() => navigate(isLoggedIn ? `/chat/${char.id}` : '/register')}
                 style={{ borderRadius: 16, overflow: 'hidden', cursor: 'pointer', transition: 'transform 0.25s',
@@ -138,8 +150,8 @@ export default function Home() {
       )}
 
       {/* Features */}
-      <section style={{ padding: '80px 40px', maxWidth: 1100, margin: '0 auto' }}>
-        <h2 style={{ textAlign: 'center', fontSize: 36, fontWeight: 800, marginBottom: 12 }}>Everything You Need</h2>
+      <section className="section-pad" style={{ padding: '80px 40px', maxWidth: 1100, margin: '0 auto' }}>
+        <h2 className="section-title" style={{ textAlign: 'center', fontSize: 36, fontWeight: 800, marginBottom: 12 }}>Everything You Need</h2>
         <p style={{ textAlign: 'center', color: '#666', marginBottom: 48, fontSize: 16 }}>A complete AI companion experience</p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16 }}>
           {FEATURES.map(f => (
@@ -154,8 +166,8 @@ export default function Home() {
       </section>
 
       {/* Pricing */}
-      <section id="pricing" style={{ padding: '80px 40px', maxWidth: 1100, margin: '0 auto' }}>
-        <h2 style={{ textAlign: 'center', fontSize: 36, fontWeight: 800, marginBottom: 12 }}>Simple Pricing</h2>
+      <section id="pricing" className="section-pad" style={{ padding: '80px 40px', maxWidth: 1100, margin: '0 auto' }}>
+        <h2 className="section-title" style={{ textAlign: 'center', fontSize: 36, fontWeight: 800, marginBottom: 12 }}>Simple Pricing</h2>
         <p style={{ textAlign: 'center', color: '#666', marginBottom: 48, fontSize: 16 }}>Credit-based — pay only for what you use</p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 16 }}>
           {PLANS.map(plan => (
@@ -197,8 +209,8 @@ export default function Home() {
       </section>
 
       {/* Testimonials */}
-      <section style={{ padding: '80px 40px', maxWidth: 1100, margin: '0 auto' }}>
-        <h2 style={{ textAlign: 'center', fontSize: 36, fontWeight: 800, marginBottom: 12 }}>What Users Say</h2>
+      <section className="section-pad" style={{ padding: '80px 40px', maxWidth: 1100, margin: '0 auto' }}>
+        <h2 className="section-title" style={{ textAlign: 'center', fontSize: 36, fontWeight: 800, marginBottom: 12 }}>What Users Say</h2>
         <p style={{ textAlign: 'center', color: '#666', marginBottom: 48, fontSize: 16 }}>Join thousands of satisfied users</p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16 }}>
           {TESTIMONIALS.map(t => (
@@ -218,8 +230,8 @@ export default function Home() {
       </section>
 
       {/* CTA */}
-      <section style={{ padding: '80px 40px', textAlign: 'center', background: 'linear-gradient(135deg,rgba(233,30,140,0.08),rgba(156,39,176,0.08))' }}>
-        <h2 style={{ fontSize: 48, fontWeight: 900, marginBottom: 16 }}>Ready to Connect?</h2>
+      <section className="section-pad" style={{ padding: '80px 40px', textAlign: 'center', background: 'linear-gradient(135deg,rgba(233,30,140,0.08),rgba(156,39,176,0.08))' }}>
+        <h2 className="cta-title" style={{ fontSize: 48, fontWeight: 900, marginBottom: 16 }}>Ready to Connect?</h2>
         <p style={{ color: '#888', fontSize: 18, marginBottom: 36 }}>Start your free account today — no credit card required.</p>
         <button className="btn-primary" onClick={() => navigate('/register')} style={{ padding: '18px 48px', fontSize: 18, borderRadius: 16 }}>
           Get Started Free 💕
@@ -227,7 +239,7 @@ export default function Home() {
       </section>
 
       {/* Footer */}
-      <footer style={{ padding: '40px', borderTop: '1px solid rgba(255,255,255,0.06)', textAlign: 'center' }}>
+      <footer className="section-pad" style={{ padding: '40px', borderTop: '1px solid rgba(255,255,255,0.06)', textAlign: 'center' }}>
         <p style={{ fontWeight: 800, fontSize: 18, background: 'linear-gradient(135deg,#e91e8c,#9c27b0)',
           WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', marginBottom: 16 }}>{brand.name}</p>
         <div style={{ display: 'flex', gap: 20, justifyContent: 'center', marginBottom: 20, flexWrap: 'wrap' }}>
