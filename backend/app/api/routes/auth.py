@@ -22,8 +22,11 @@ router = APIRouter()
 @router.post("/register", response_model=TokenResponse)
 async def register(req: RegisterRequest, db: Session = Depends(get_db)):
     # Check duplicate
-    if db.query(UserAccount).filter(UserAccount.user_id == req.email).first():
+    if db.query(UserAccount).filter(UserAccount.user_id == req.email).first() or db.query(UserAccount).filter(UserAccount.email == req.email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
+        
+    if db.query(UserAccount).filter(UserAccount.username == req.username).first():
+        raise HTTPException(status_code=400, detail="Username already taken")
 
     free_plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.plan_name == "free").first()
     monthly_credits = free_plan.monthly_credits if free_plan else 50
@@ -31,6 +34,7 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
     user = UserAccount(
         user_id=req.email,
         email=req.email,
+        username=req.username,
         name=req.name,
         age=req.age,
         hashed_password=hash_password(req.password),

@@ -5,7 +5,7 @@ import brand from '../config/brand';
 import API from '../api/api';
 
 export default function Register() {
-  const [form, setForm] = useState({ name: '', email: '', age: '', password: '', confirm: '' });
+  const [form, setForm] = useState({ name: '', username: '', email: '', age: '', password: '', confirm: '' });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const navigate = useNavigate();
@@ -56,7 +56,7 @@ export default function Register() {
     setError('');
     try {
       const res = await API.post('/api/auth/register', {
-        name: form.name, email: form.email, age: Number(form.age), password: form.password,
+        name: form.name, username: form.username.toLowerCase().replace(/[^a-z0-9_]/g, ''), email: form.email, age: Number(form.age), password: form.password,
       });
       const d = res.data;
       localStorage.setItem('token', d.access_token);
@@ -92,6 +92,7 @@ export default function Register() {
           background: '#12121a', borderRadius: 18, padding: 28, border: '1px solid rgba(255,255,255,0.06)' }}>
           {[
             { id: 'reg-name', k: 'name', label: 'Full Name', type: 'text', placeholder: 'Your name' },
+            { id: 'reg-username', k: 'username', label: 'Username (Unique)', type: 'text', placeholder: 'cool_user99' },
             { id: 'reg-email', k: 'email', label: 'Email', type: 'email', placeholder: 'you@example.com' },
             { id: 'reg-age', k: 'age', label: 'Age', type: 'number', placeholder: '18' },
           ].map(({ id, k, label, type, placeholder }) => (

@@ -7,6 +7,7 @@ import re
 class RegisterRequest(BaseModel):
     name: str
     email: EmailStr
+    username: str
     age: int
     password: str
 
