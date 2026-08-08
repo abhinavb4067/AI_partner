@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, MoreVertical, MessageSquarePlus, SlidersHorizontal, Sparkles } from 'lucide-react';
 import API from '../api/api';
+import InstallPWA from '../components/InstallPWA';
 
 const AVATAR_GRADIENTS = [
   'linear-gradient(135deg, #f093fb, #f5576c)',
@@ -104,6 +105,19 @@ const CharacterSelection = () => {
             >
               <div style={{ fontSize: 16 }}>👤</div>
             </button>
+            <button
+              onClick={() => navigate('/discover')}
+              title="Real Humans"
+              style={{
+                background: 'none', border: 'none', color: '#8696a0', cursor: 'pointer',
+                padding: 7, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                transition: 'background 0.15s, color 0.15s',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(233,30,140,0.15)'; e.currentTarget.style.color = '#e91e8c'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = '#8696a0'; }}
+            >
+              <div style={{ fontSize: 16 }}>❤️</div>
+            </button>
             {/* {[MessageSquarePlus, MoreVertical].map((Icon, i) => (
               <button key={i} style={{
                 background: 'none', border: 'none', color: '#8696a0', cursor: 'pointer',
@@ -118,6 +132,9 @@ const CharacterSelection = () => {
             ))} */}
           </div>
         </div>
+
+        {/* ── PWA Install Prompt ── */}
+        <InstallPWA />
 
         {/* ── Search ── */}
         <div style={{ padding: '10px 12px 6px' }}>

@@ -19,7 +19,7 @@ VOICE_CREDIT_COST = 2
 
 
 class TTSRequest(BaseModel):
-    char_id: int
+    char_id: str
     text: str
 
 

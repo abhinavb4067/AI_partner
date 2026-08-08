@@ -19,6 +19,7 @@ router = APIRouter()
 class UpdateProfileRequest(BaseModel):
     name: Optional[str] = None
     email: Optional[EmailStr] = None
+    username: Optional[str] = None
 
 
 class ChangePasswordRequest(BaseModel):
@@ -50,6 +51,7 @@ async def get_profile(
         "id": current_user.id,
         "user_id": current_user.user_id,
         "name": current_user.name,
+        "username": current_user.username,
         "email": current_user.email or current_user.user_id,
         "avatar_url": current_user.avatar_url,
         "plan": {
@@ -93,6 +95,14 @@ async def update_profile(
 
     if req.name is not None:
         current_user.name = req.name.strip()
+        
+    if req.username is not None:
+        clean_username = req.username.strip().lower()
+        if clean_username != current_user.username:
+            conflict = db.query(UserAccount).filter(UserAccount.username == clean_username).first()
+            if conflict:
+                raise HTTPException(status_code=400, detail="Username already taken")
+            current_user.username = clean_username
 
     db.commit()
     return {"message": "Profile updated successfully"}

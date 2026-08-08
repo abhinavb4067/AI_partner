@@ -6,7 +6,7 @@ from pydantic import BaseModel, EmailStr
 
 
 class UserListItem(BaseModel):
-    id: int
+    id: str
     user_id: str
     name: Optional[str]
     email: Optional[str]
@@ -23,7 +23,7 @@ class UserListItem(BaseModel):
 
 class UpdateUserRequest(BaseModel):
     name: Optional[str] = None
-    plan_id: Optional[int] = None
+    plan_id: Optional[str] = None
     credits_remaining: Optional[int] = None
     is_unlimited: Optional[bool] = None
     is_active: Optional[bool] = None

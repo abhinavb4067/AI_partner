@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 
 class CreateOrderRequest(BaseModel):
-    plan_id: int
+    plan_id: str
 
 
 class CreateOrderResponse(BaseModel):
@@ -21,11 +21,11 @@ class VerifyPaymentRequest(BaseModel):
     razorpay_order_id: str
     razorpay_payment_id: str
     razorpay_signature: str
-    plan_id: int
+    plan_id: str
 
 
 class PaymentHistoryItem(BaseModel):
-    id: int
+    id: str
     plan_name: str
     amount: float
     currency: str

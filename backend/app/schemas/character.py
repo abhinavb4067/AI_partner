@@ -1,11 +1,11 @@
 """Pydantic schemas for character management."""
 from __future__ import annotations
-from typing import Optional
+from typing import Optional, Union
 from pydantic import BaseModel
 
 
 class CharacterResponse(BaseModel):
-    id: int
+    id: str
     name: str
     slug: str
     gender: str
@@ -17,7 +17,7 @@ class CharacterResponse(BaseModel):
     eye_color: Optional[str]
     voice_enabled: bool
     is_active: bool
-    plan_id: Optional[int]
+    plan_id: Optional[str]
 
     class Config:
         from_attributes = True
@@ -36,7 +36,7 @@ class CharacterCreateRequest(BaseModel):
     identity_dna: Optional[str] = None
     body_dna: Optional[str] = None
     ollama_model: str = "dolphin-llama3:8b"
-    plan_id: Optional[int] = None
+    plan_id: Optional[str] = None
     elevenlabs_voice_id: Optional[str] = None
     voice_enabled: bool = False
 
@@ -53,7 +53,7 @@ class CharacterUpdateRequest(BaseModel):
     identity_dna: Optional[str] = None
     body_dna: Optional[str] = None
     ollama_model: Optional[str] = None
-    plan_id: Optional[int] = None
+    plan_id: Optional[str] = None
     elevenlabs_voice_id: Optional[str] = None
     voice_enabled: Optional[bool] = None
     is_active: Optional[bool] = None

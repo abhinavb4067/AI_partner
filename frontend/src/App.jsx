@@ -14,6 +14,9 @@ import ResetPassword from './pages/ResetPassword';
 import CharacterSelection from './pages/CharacterSelection';
 import Chat from './pages/Chat/Chat';
 import Profile from './pages/Profile';
+import Discover from './pages/Social/Discover';
+import Matches from './pages/Social/Matches';
+import HumanChat from './pages/Social/HumanChat';
 
 // Admin pages
 import AdminLogin from './pages/admin/AdminLogin';
@@ -48,6 +51,9 @@ function App() {
         <Route path="/select-character" element={<ProtectedRoute><CharacterSelection /></ProtectedRoute>} />
         <Route path="/chat/:charId" element={<ProtectedRoute><Chat /></ProtectedRoute>} />
         <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+        <Route path="/discover" element={<ProtectedRoute><Discover /></ProtectedRoute>} />
+        <Route path="/matches" element={<ProtectedRoute><Matches /></ProtectedRoute>} />
+        <Route path="/human-chat/:targetId" element={<ProtectedRoute><HumanChat /></ProtectedRoute>} />
 
         {/* ── Admin ── */}
         <Route path="/admin/login" element={<AdminLogin />} />

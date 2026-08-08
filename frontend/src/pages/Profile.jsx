@@ -83,6 +83,7 @@ export default function Profile() {
 
 function ProfileTab({ profile, onUpdate, card }) {
   const [name, setName] = useState(profile?.name || '');
+  const [username, setUsername] = useState(profile?.username || '');
   const [email, setEmail] = useState(profile?.email || profile?.user_id || '');
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
@@ -91,9 +92,9 @@ function ProfileTab({ profile, onUpdate, card }) {
   const save = async () => {
     setSaving(true);
     try {
-      await API.put('/api/profile/update', { name, email });
+      await API.put('/api/profile/update', { name, email, username });
       setMsg('✓ Profile updated!');
-      onUpdate(p => ({ ...p, name, email }));
+      onUpdate(p => ({ ...p, name, email, username }));
       localStorage.setItem('user_name', name);
     } catch (e) { setMsg('❌ ' + (e.response?.data?.detail || 'Update failed')); }
     setSaving(false);
@@ -132,6 +133,8 @@ function ProfileTab({ profile, onUpdate, card }) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div><label style={{ color: '#888', fontSize: 12, display: 'block', marginBottom: 7 }}>Display Name</label>
           <input className="inp" value={name} onChange={e => setName(e.target.value)} /></div>
+        <div><label style={{ color: '#888', fontSize: 12, display: 'block', marginBottom: 7 }}>Username (Unique ID)</label>
+          <input className="inp" value={username} onChange={e => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))} placeholder="e.g. cool_user99" /></div>
         <div><label style={{ color: '#888', fontSize: 12, display: 'block', marginBottom: 7 }}>Email</label>
           <input className="inp" type="email" value={email} onChange={e => setEmail(e.target.value)} /></div>
       </div>

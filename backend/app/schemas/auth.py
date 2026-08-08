@@ -44,7 +44,7 @@ class AdminLoginRequest(BaseModel):
 class AdminTokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
-    admin_id: int
+    admin_id: str
     email: str
     full_name: str
     role: str

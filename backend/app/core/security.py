@@ -52,7 +52,7 @@ def create_user_token(user_id: str) -> str:
     return create_access_token({"sub": user_id, "type": "user"})
 
 
-def create_admin_token(admin_id: int) -> str:
+def create_admin_token(admin_id: str) -> str:
     """Create a JWT for an admin. Claim key: 'sub_admin'."""
     return create_access_token({"sub_admin": str(admin_id), "type": "admin"})
 

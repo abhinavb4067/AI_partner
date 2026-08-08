@@ -50,7 +50,7 @@ def get_current_admin(
     if not admin_id_str:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid admin token")
 
-    admin = db.query(AdminUser).filter(AdminUser.id == int(admin_id_str)).first()
+    admin = db.query(AdminUser).filter(AdminUser.id == admin_id_str).first()
     if not admin or not admin.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin not found or inactive")
 

@@ -127,7 +127,7 @@ async def list_users(
 
 
 @router.get("/users/{user_id}")
-async def get_user(user_id: int, _: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db)):
+async def get_user(user_id: str, _: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db)):
     user = db.query(UserAccount).filter(UserAccount.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -144,7 +144,7 @@ async def get_user(user_id: int, _: AdminUser = Depends(get_current_admin), db: 
 
 @router.put("/users/{user_id}")
 async def update_user(
-    user_id: int, req: UpdateUserRequest,
+    user_id: str, req: UpdateUserRequest,
     _: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db),
 ):
     user = db.query(UserAccount).filter(UserAccount.id == user_id).first()
@@ -166,7 +166,7 @@ async def update_user(
 
 
 @router.delete("/users/{user_id}")
-async def delete_user(user_id: int, _: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db)):
+async def delete_user(user_id: str, _: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db)):
     user = db.query(UserAccount).filter(UserAccount.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -241,7 +241,7 @@ async def create_character(
 
 @router.put("/characters/{char_id}")
 async def update_character(
-    char_id: int,
+    char_id: str,
     name: Optional[str] = Form(None),
     gender: Optional[str] = Form(None),
     age_display: Optional[int] = Form(None),
@@ -293,7 +293,7 @@ async def update_character(
 
 # ── Admin Character Posts ───────────────────────────────────────────────────
 @router.get("/characters/{char_id}/posts")
-async def get_character_posts(char_id: int, _: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db)):
+async def get_character_posts(char_id: str, _: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db)):
     posts = db.query(CharacterPost).filter(CharacterPost.character_id == char_id).order_by(CharacterPost.created_at.desc()).all()
     return [
         {
@@ -304,7 +304,7 @@ async def get_character_posts(char_id: int, _: AdminUser = Depends(get_current_a
 
 @router.post("/characters/{char_id}/posts")
 async def create_character_post(
-    char_id: int,
+    char_id: str,
     is_premium: bool = Form(True),
     file: UploadFile = File(...),
     _: AdminUser = Depends(get_current_admin),
@@ -326,7 +326,7 @@ async def create_character_post(
     return {"message": "Post created"}
 
 @router.delete("/characters/posts/{post_id}")
-async def delete_character_post(post_id: int, _: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db)):
+async def delete_character_post(post_id: str, _: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db)):
     post = db.query(CharacterPost).filter(CharacterPost.id == post_id).first()
     if not post: raise HTTPException(404, "Post not found")
     db.delete(post)
@@ -335,7 +335,7 @@ async def delete_character_post(post_id: int, _: AdminUser = Depends(get_current
 
 
 @router.delete("/characters/{char_id}")
-async def delete_character(char_id: int, _: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db)):
+async def delete_character(char_id: str, _: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db)):
     char = db.query(Character).filter(Character.id == char_id).first()
     if not char:
         raise HTTPException(status_code=404, detail="Character not found")
@@ -353,7 +353,7 @@ async def list_plans(_: AdminUser = Depends(get_current_admin), db: Session = De
 
 @router.put("/plans/{plan_id}")
 async def update_plan(
-    plan_id: int, req: PlanUpdateRequest,
+    plan_id: str, req: PlanUpdateRequest,
     _: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db),
 ):
     plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.id == plan_id).first()

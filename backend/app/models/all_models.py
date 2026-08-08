@@ -18,6 +18,7 @@ from sqlalchemy import (
     Integer, JSON, String, Text,
 )
 from sqlalchemy.orm import relationship
+import uuid
 
 from app.core.database import Base
 
@@ -26,7 +27,7 @@ from app.core.database import Base
 class SubscriptionPlan(Base):
     __tablename__ = "subscription_plans"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
     plan_name = Column(String(50), unique=True, nullable=False)   # free|starter|pro|elite
     display_name = Column(String(100), default="Free")
     monthly_credits = Column(Integer, default=50)                 # -1 not used; is_unlimited flag instead
@@ -48,15 +49,16 @@ class SubscriptionPlan(Base):
 class UserAccount(Base):
     __tablename__ = "user_accounts"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String, unique=True, index=True, nullable=False)   # email string (legacy PK)
     email = Column(String, unique=True, index=True, nullable=True)
+    username = Column(String(50), unique=True, index=True, nullable=True)
     name = Column(String(150), nullable=True)
     age = Column(Integer, nullable=True)
     hashed_password = Column(String, nullable=True)                     # NULL for legacy rows
     avatar_url = Column(String, nullable=True)
 
-    plan_id = Column(Integer, ForeignKey("subscription_plans.id"), nullable=True)
+    plan_id = Column(String(36), ForeignKey("subscription_plans.id"), nullable=True)
     credits_remaining = Column(Integer, default=50)                     # replaces tokens_left
     is_unlimited = Column(Boolean, default=False)                       # admin-granted override
     credits_reset_at = Column(DateTime, nullable=True)
@@ -74,7 +76,7 @@ class UserAccount(Base):
 class AdminUser(Base):
     __tablename__ = "admin_users"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
     full_name = Column(String(150), default="Administrator")
@@ -88,7 +90,7 @@ class AdminUser(Base):
 class Character(Base):
     __tablename__ = "characters"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
     name = Column(String(100), nullable=False)
     slug = Column(String(100), unique=True, nullable=False)
     gender = Column(String(20), default="female")
@@ -113,7 +115,7 @@ class Character(Base):
     elevenlabs_voice_id = Column(String(100), nullable=True)            # e.g. "21m00Tcm4TlvDq8ikWAM"
 
     # Plan gating
-    plan_id = Column(Integer, ForeignKey("subscription_plans.id"), nullable=True)
+    plan_id = Column(String(36), ForeignKey("subscription_plans.id"), nullable=True)
 
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -127,8 +129,8 @@ class Character(Base):
 class UserMemory(Base):
     __tablename__ = "user_memories"
 
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("user_accounts.id"), nullable=False)
+    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("user_accounts.id"), nullable=False)
     key = Column(String(100), nullable=False)
     value = Column(Text, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -140,9 +142,9 @@ class UserMemory(Base):
 class ChatMessage(Base):
     __tablename__ = "chat_messages"
 
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("user_accounts.id"), nullable=False)
-    character_id = Column(Integer, ForeignKey("characters.id"), nullable=False)
+    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("user_accounts.id"), nullable=False)
+    character_id = Column(String(36), ForeignKey("characters.id"), nullable=False)
     sender = Column(String(20), nullable=False)                         # 'user' | 'assistant'
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -155,9 +157,9 @@ class ChatMessage(Base):
 class Payment(Base):
     __tablename__ = "payments"
 
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("user_accounts.id"), nullable=False)
-    plan_id = Column(Integer, ForeignKey("subscription_plans.id"), nullable=False)
+    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("user_accounts.id"), nullable=False)
+    plan_id = Column(String(36), ForeignKey("subscription_plans.id"), nullable=False)
 
     razorpay_order_id = Column(String(100), unique=True, nullable=True)
     razorpay_payment_id = Column(String(100), unique=True, nullable=True)
@@ -175,11 +177,37 @@ class Payment(Base):
 class CharacterPost(Base):
     __tablename__ = "character_posts"
 
-    id = Column(Integer, primary_key=True, index=True)
-    character_id = Column(Integer, ForeignKey("characters.id"), nullable=False)
+    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
+    character_id = Column(String(36), ForeignKey("characters.id"), nullable=False)
     media_url = Column(String, nullable=False)
     media_type = Column(String(20), default="image")                    # 'image' or 'video'
     is_premium = Column(Boolean, default=True)                          # if true, requires unlimited plan
     created_at = Column(DateTime, default=datetime.utcnow)
 
     character = relationship("Character", back_populates="posts")
+
+# ── Human to Human Networking ─────────────────────────────────────────────────
+class HumanSwipe(Base):
+    __tablename__ = "human_swipes"
+    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
+    swiper_id = Column(String(36), ForeignKey("user_accounts.id"), nullable=False)
+    target_id = Column(String(36), ForeignKey("user_accounts.id"), nullable=False)
+    is_like = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+class HumanMatch(Base):
+    __tablename__ = "human_matches"
+    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
+    user1_id = Column(String(36), ForeignKey("user_accounts.id"), nullable=False)
+    user2_id = Column(String(36), ForeignKey("user_accounts.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class HumanMessage(Base):
+    __tablename__ = "human_messages"
+    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
+    sender_id = Column(String(36), ForeignKey("user_accounts.id"), nullable=False)
+    receiver_id = Column(String(36), ForeignKey("user_accounts.id"), nullable=False)
+    content = Column(Text, nullable=True)
+    message_type = Column(String(20), default="text") # 'text', 'image', 'view_once', 'call_request'
+    is_viewed = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)

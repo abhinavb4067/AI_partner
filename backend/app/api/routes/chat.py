@@ -121,15 +121,20 @@ async def get_characters(user_id: str = None, db: Session = Depends(get_db)):
     return char_list
 
 @router.get("/characters/{char_id}")
-async def get_character(char_id: int, db: Session = Depends(get_db)):
+async def get_character(char_id: str, db: Session = Depends(get_db)):
     char = db.query(Character).filter(Character.id == char_id).first()
     if not char:
         raise HTTPException(status_code=404, detail="Character not found")
+    
     return char
 
 @router.get("/characters/{char_id}/posts")
-async def get_character_posts(char_id: int, db: Session = Depends(get_db)):
-    posts = db.query(CharacterPost).filter(CharacterPost.character_id == char_id).order_by(CharacterPost.created_at.desc()).all()
+async def get_character_posts(char_id: str, db: Session = Depends(get_db)):
+    char = db.query(Character).filter(Character.id == char_id).first()
+    if not char:
+        raise HTTPException(status_code=404, detail="Character not found")
+        
+    posts = db.query(CharacterPost).filter(CharacterPost.character_id == char.id).order_by(CharacterPost.created_at.desc()).all()
     return [
         {
             "id": p.id,
@@ -332,14 +337,15 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
     }
 
 @router.get("/history/{user_id_str}/{char_id}")
-async def get_chat_history(user_id_str: str, char_id: int, db: Session = Depends(get_db)):
+async def get_chat_history(user_id_str: str, char_id: str, db: Session = Depends(get_db)):
     user = db.query(UserAccount).filter(UserAccount.user_id == user_id_str).first()
-    if not user:
+    char = db.query(Character).filter(Character.id == char_id).first()
+    if not user or not char:
         return []
 
     messages = db.query(ChatMessage).filter(
         ChatMessage.user_id == user.id,
-        ChatMessage.character_id == char_id
+        ChatMessage.character_id == char.id
     ).order_by(ChatMessage.id.asc()).all()
 
     formatted_chat = []

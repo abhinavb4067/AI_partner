@@ -18,7 +18,7 @@ from app.models.all_models import AdminUser  # noqa: F401 — ensures all models
 import app.models.all_models  # noqa
 
 from app.api.routes import auth, chat
-from app.api.routes import admin_auth, admin, profile, payment, voice
+from app.api.routes import admin_auth, admin, profile, payment, voice, social, ws_chat
 
 
 # ── Startup / Shutdown ────────────────────────────────────────────────────────
@@ -79,6 +79,8 @@ app.include_router(profile.router,    prefix="/api/profile",     tags=["Profile"
 app.include_router(payment.router,    prefix="/api/payment",     tags=["Payment"])
 app.include_router(voice.router,      prefix="/api/voice",       tags=["Voice"])
 app.include_router(admin.router,      prefix="/api/admin",       tags=["Admin"])
+app.include_router(social.router,     prefix="/api/social",      tags=["Social"])
+app.include_router(ws_chat.router,    prefix="/api/ws/chat",     tags=["Human Chat Websocket"])
 
 # ── Static Files ──────────────────────────────────────────────────────────────
 os.makedirs("media", exist_ok=True)
