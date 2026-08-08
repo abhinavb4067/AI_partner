@@ -20,6 +20,7 @@ export default function HumanChat() {
   const localStream = useRef(null);
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
+  const iceCandidateQueue = useRef([]);
 
   useEffect(() => {
     // 1. Fetch Target User Info
@@ -74,16 +75,31 @@ export default function HumanChat() {
       else if (data.type === 'offer') {
         await startWebRTC(false); // I am the callee
         await pc.current.setRemoteDescription(new RTCSessionDescription(data.sdp));
+        
+        // Drain queued ICE candidates
+        while (iceCandidateQueue.current.length > 0) {
+          const cand = iceCandidateQueue.current.shift();
+          await pc.current.addIceCandidate(new RTCIceCandidate(cand));
+        }
+        
         const answer = await pc.current.createAnswer();
         await pc.current.setLocalDescription(answer);
         ws.current.send(JSON.stringify({ type: 'answer', target_id: targetId, sdp: answer }));
       }
       else if (data.type === 'answer') {
         await pc.current.setRemoteDescription(new RTCSessionDescription(data.sdp));
+        
+        // Drain queued ICE candidates
+        while (iceCandidateQueue.current.length > 0) {
+          const cand = iceCandidateQueue.current.shift();
+          await pc.current.addIceCandidate(new RTCIceCandidate(cand));
+        }
       }
       else if (data.type === 'ice_candidate') {
-        if (pc.current) {
+        if (pc.current && pc.current.remoteDescription && pc.current.remoteDescription.type) {
           await pc.current.addIceCandidate(new RTCIceCandidate(data.candidate));
+        } else {
+          iceCandidateQueue.current.push(data.candidate);
         }
       }
     };
@@ -174,6 +190,7 @@ export default function HumanChat() {
 
   const endCall = () => {
     setCallState('idle');
+    iceCandidateQueue.current = [];
     if (pc.current) { pc.current.close(); pc.current = null; }
     if (localStream.current) { localStream.current.getTracks().forEach(t => t.stop()); localStream.current = null; }
   };
