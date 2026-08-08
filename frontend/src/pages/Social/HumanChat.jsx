@@ -35,8 +35,18 @@ export default function HumanChat() {
       .catch(console.error);
 
     // 3. Connect WebSocket
-    const token = localStorage.getItem('user_token');
-    const wsUrl = import.meta.env.VITE_API_URL.replace('http', 'ws') + `/api/ws/chat/${token}`;
+    const token = localStorage.getItem('token');
+    
+    let wsUrl = '';
+    if (import.meta.env.VITE_API_URL) {
+      // Replace http with ws, and https with wss safely
+      wsUrl = import.meta.env.VITE_API_URL.replace(/^http/, 'ws') + `/api/ws/chat/${token}`;
+    } else {
+      const loc = window.location;
+      const protocol = loc.protocol === 'https:' ? 'wss:' : 'ws:';
+      wsUrl = `${protocol}//${loc.host}/api/ws/chat/${token}`;
+    }
+    
     ws.current = new WebSocket(wsUrl);
 
     ws.current.onmessage = async (event) => {
