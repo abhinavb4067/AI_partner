@@ -4,9 +4,10 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPExce
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_
 
-from app.core.database import SessionLocal
+from app.core.database import SessionLocal, get_db
 from app.core.security import decode_token
 from app.models.all_models import UserAccount, HumanMessage
+from app.api.deps import get_current_user
 
 router = APIRouter()
 

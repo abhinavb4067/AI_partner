@@ -107,9 +107,12 @@ async def google_login(req: GoogleLoginRequest, db: Session = Depends(get_db)):
         free_plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.plan_name == "free").first()
         monthly_credits = free_plan.monthly_credits if free_plan else 50
         
+        import uuid
+        
         user = UserAccount(
             user_id=email,
             email=email,
+            username=email.split('@')[0] + "_" + str(uuid.uuid4())[:6],
             name=name,
             age=18,
             hashed_password="", # No password for google accounts
