@@ -64,7 +64,7 @@ export default function InstallPWA() {
           <Download size={20} color="#fff" />
         </div>
         <div>
-          <h4 style={{ margin: 0, color: '#fff', fontSize: 14, fontWeight: 'bold' }}>Install Maya AI</h4>
+          <h4 style={{ margin: 0, color: '#fff', fontSize: 14, fontWeight: 'bold' }}>Install Avoiga by Ectama</h4>
           <p style={{ margin: '2px 0 0', color: 'rgba(255,255,255,0.8)', fontSize: 12 }}>Add to home screen for a better experience</p>
         </div>
       </div>
