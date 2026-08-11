@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Phone, Video, Image as ImageIcon, Send, X } from 'lucide-react';
-import API from '../../api/api';
+import { Phone, Video, Image as ImageIcon, Send, X, Mic, MicOff, VideoOff, PhoneOff, Check, CheckCheck } from 'lucide-react';
+import API, { getMediaUrl } from '../../api/api';
 
 export default function HumanChat() {
   const { targetId } = useParams();
@@ -9,26 +9,36 @@ export default function HumanChat() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [targetUser, setTargetUser] = useState(null);
-  
+  const [isDpOpen, setIsDpOpen] = useState(false);
+
   // WebSocket
   const ws = useRef(null);
-  
+
   // WebRTC
   const [callState, setCallState] = useState('idle'); // idle, ringing, incoming, active
   const [hasVideo, setHasVideo] = useState(false);
+  const hasVideoRef = useRef(false);
   const pc = useRef(null);
   const localStream = useRef(null);
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const iceCandidateQueue = useRef([]);
+  
+  const [isMuted, setIsMuted] = useState(false);
+  const [isCameraOff, setIsCameraOff] = useState(false);
 
   useEffect(() => {
     // 1. Fetch Target User Info
-    API.get(`/api/social/search/${targetId}`) // Actually we might need a direct ID fetch, but for now we rely on history or matches
-      .then(res => setTargetUser(res.data))
-      .catch(() => {
-        // Fallback: we just fetch history and assume it's fine
-      });
+    const fetchUser = () => {
+      API.get(`/api/social/user/${targetId}`)
+        .then(res => setTargetUser(res.data))
+        .catch(() => {});
+    };
+    
+    fetchUser();
+    
+    // Live polling for online/offline status
+    const statusInterval = setInterval(fetchUser, 10000);
 
     // 2. Fetch History
     API.get(`/api/ws/chat/history/${targetId}`)
@@ -37,7 +47,7 @@ export default function HumanChat() {
 
     // 3. Connect WebSocket
     const token = localStorage.getItem('token');
-    
+
     let wsUrl = '';
     if (import.meta.env.VITE_API_URL) {
       // Replace http with ws, and https with wss safely
@@ -47,48 +57,58 @@ export default function HumanChat() {
       const protocol = loc.protocol === 'https:' ? 'wss:' : 'ws:';
       wsUrl = `${protocol}//${loc.host}/api/ws/chat/${token}`;
     }
-    
+
     ws.current = new WebSocket(wsUrl);
 
     ws.current.onmessage = async (event) => {
       const data = JSON.parse(event.data);
-      
+
       if (data.type === 'new_message') {
         setMessages(prev => [...prev, data.message]);
-      } 
-      else if (data.type === 'message_viewed') {
-        setMessages(prev => prev.map(m => m.id === data.message_id ? { ...m, is_viewed: true, content: '[VIEWED]' } : m));
+        
+        // If it's from the target, instantly mark it as read since we are viewing the chat
+        if (data.message.sender_id === targetId) {
+          ws.current.send(JSON.stringify({ type: 'read', message_id: data.message.id }));
+        }
+      }
+      else if (data.type === 'message_viewed' || data.type === 'message_read') {
+        setMessages(prev => prev.map(m => m.id === data.message_id ? { ...m, is_viewed: true, content: data.type === 'message_viewed' ? '[VIEWED]' : m.content } : m));
       }
       // WebRTC Signaling
       else if (data.type === 'call_request') {
         setHasVideo(data.video);
+        hasVideoRef.current = data.video;
         setCallState('incoming');
       }
-      else if (data.type === 'call_reject') {
-        endCall();
-        alert("Call declined");
+      else if (data.type === 'call_reject' || data.type === 'call_end') {
+        endCall(false);
       }
       else if (data.type === 'call_accept') {
         setCallState('active');
-        await startWebRTC(true); // I am the caller, I create the offer
+        setTimeout(() => startWebRTC(true), 100); // Wait for DOM to render <video>
       }
       else if (data.type === 'offer') {
-        await startWebRTC(false); // I am the callee
-        await pc.current.setRemoteDescription(new RTCSessionDescription(data.sdp));
-        
-        // Drain queued ICE candidates
-        while (iceCandidateQueue.current.length > 0) {
-          const cand = iceCandidateQueue.current.shift();
-          await pc.current.addIceCandidate(new RTCIceCandidate(cand));
-        }
-        
-        const answer = await pc.current.createAnswer();
-        await pc.current.setLocalDescription(answer);
-        ws.current.send(JSON.stringify({ type: 'answer', target_id: targetId, sdp: answer }));
+        setCallState('active');
+        setTimeout(async () => {
+          if (!pc.current) {
+            await startWebRTC(false); // Initial call setup
+          }
+          await pc.current.setRemoteDescription(new RTCSessionDescription(data.sdp));
+
+          // Drain queued ICE candidates
+          while (iceCandidateQueue.current.length > 0) {
+            const cand = iceCandidateQueue.current.shift();
+            await pc.current.addIceCandidate(new RTCIceCandidate(cand));
+          }
+
+          const answer = await pc.current.createAnswer();
+          await pc.current.setLocalDescription(answer);
+          ws.current.send(JSON.stringify({ type: 'answer', target_id: targetId, sdp: answer }));
+        }, 100);
       }
       else if (data.type === 'answer') {
         await pc.current.setRemoteDescription(new RTCSessionDescription(data.sdp));
-        
+
         // Drain queued ICE candidates
         while (iceCandidateQueue.current.length > 0) {
           const cand = iceCandidateQueue.current.shift();
@@ -107,8 +127,28 @@ export default function HumanChat() {
     return () => {
       if (ws.current) ws.current.close();
       endCall();
+      clearInterval(statusInterval);
     };
   }, [targetId]);
+
+  // Send read receipts for any unread messages loaded from history
+  useEffect(() => {
+    let changed = false;
+    const updatedMessages = messages.map(m => {
+      if (m.sender_id === targetId && !m.is_viewed) {
+        if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+          ws.current.send(JSON.stringify({ type: 'read', message_id: m.id }));
+          changed = true;
+          return { ...m, is_viewed: true };
+        }
+      }
+      return m;
+    });
+    
+    if (changed) {
+      setMessages(updatedMessages);
+    }
+  }, [messages, targetId]);
 
   // Scroll to bottom
   const endRef = useRef(null);
@@ -123,14 +163,24 @@ export default function HumanChat() {
     setInput('');
   };
 
-  const sendViewOnce = (e) => {
+  const sendViewOnce = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      ws.current.send(JSON.stringify({ type: 'view_once', target_id: targetId, content: ev.target.result }));
-    };
-    reader.readAsDataURL(file);
+    
+    // Instead of sending base64, we upload to GCS first for massive performance gains
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      const res = await API.post(`/api/social/chat-image`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      if (ws.current && res.data.url) {
+        ws.current.send(JSON.stringify({ type: 'view_once', target_id: targetId, content: res.data.url }));
+      }
+    } catch (err) {
+      console.error("Failed to upload image", err);
+      alert("Failed to send image.");
+    }
   };
 
   const markViewed = (msgId) => {
@@ -143,6 +193,7 @@ export default function HumanChat() {
   // --- WebRTC Functions ---
   const initiateCall = (video) => {
     setHasVideo(video);
+    hasVideoRef.current = video;
     setCallState('ringing');
     ws.current.send(JSON.stringify({ type: 'call_request', target_id: targetId, video }));
   };
@@ -159,15 +210,55 @@ export default function HumanChat() {
 
   const startWebRTC = async (isCaller) => {
     try {
-      localStream.current = await navigator.mediaDevices.getUserMedia({ video: hasVideo, audio: true });
-      if (localVideoRef.current) localVideoRef.current.srcObject = localStream.current;
-
-      pc.current = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+      setIsMuted(false);
+      setIsCameraOff(!hasVideoRef.current);
       
+      localStream.current = await navigator.mediaDevices.getUserMedia({ 
+        video: hasVideoRef.current ? {
+           width: { ideal: 640, max: 1280 },
+           height: { ideal: 480, max: 720 },
+           frameRate: { ideal: 24, max: 30 }
+        } : false, 
+        audio: {
+           echoCancellation: true,
+           noiseSuppression: true,
+           autoGainControl: true,
+           sampleRate: { ideal: 48000 }
+        } 
+      });
+      if (localVideoRef.current) {
+         localVideoRef.current.srcObject = localStream.current;
+      }
+
+      pc.current = new RTCPeerConnection({ 
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { 
+            urls: 'turn:openrelay.metered.ca:80',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          },
+          { 
+            urls: 'turn:openrelay.metered.ca:443',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          },
+          { 
+            urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          }
+        ] 
+      });
+
       localStream.current.getTracks().forEach(track => pc.current.addTrack(track, localStream.current));
 
       pc.current.ontrack = (event) => {
         if (remoteVideoRef.current) remoteVideoRef.current.srcObject = event.streams[0];
+        if (event.track.kind === 'video') {
+          hasVideoRef.current = true;
+          setHasVideo(true);
+        }
       };
 
       pc.current.onicecandidate = (event) => {
@@ -184,15 +275,59 @@ export default function HumanChat() {
     } catch (e) {
       console.error("WebRTC Error", e);
       alert("Failed to access camera/mic");
-      endCall();
+      endCall(true);
     }
   };
 
-  const endCall = () => {
+  const endCall = (sendSignal = false) => {
+    if (sendSignal && ws.current && ws.current.readyState === WebSocket.OPEN) {
+      ws.current.send(JSON.stringify({ type: 'call_end', target_id: targetId }));
+    }
     setCallState('idle');
     iceCandidateQueue.current = [];
     if (pc.current) { pc.current.close(); pc.current = null; }
     if (localStream.current) { localStream.current.getTracks().forEach(t => t.stop()); localStream.current = null; }
+  };
+
+  const toggleMute = () => {
+    if (!localStream.current) return;
+    const audioTrack = localStream.current.getAudioTracks()[0];
+    if (audioTrack) {
+      audioTrack.enabled = !audioTrack.enabled;
+      setIsMuted(!audioTrack.enabled);
+    }
+  };
+
+  const toggleVideo = async () => {
+    if (!localStream.current) return;
+    const videoTrack = localStream.current.getVideoTracks()[0];
+    if (videoTrack) {
+      videoTrack.enabled = !videoTrack.enabled;
+      setIsCameraOff(!videoTrack.enabled);
+    } else {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        const newVideoTrack = stream.getVideoTracks()[0];
+        localStream.current.addTrack(newVideoTrack);
+        
+        if (pc.current) {
+          pc.current.addTrack(newVideoTrack, localStream.current);
+          const offer = await pc.current.createOffer();
+          await pc.current.setLocalDescription(offer);
+          if (ws.current) ws.current.send(JSON.stringify({ type: 'offer', target_id: targetId, sdp: offer }));
+        }
+        
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = null;
+          localVideoRef.current.srcObject = localStream.current;
+        }
+        hasVideoRef.current = true;
+        setHasVideo(true);
+        setIsCameraOff(false);
+      } catch (err) {
+        alert("Camera permission denied or camera not available.");
+      }
+    }
   };
 
   // --- Renders ---
@@ -200,54 +335,70 @@ export default function HumanChat() {
     <div style={styles.container}>
       {/* HEADER */}
       <div style={styles.header}>
-        <div style={{display: 'flex', alignItems: 'center'}}>
+        <div style={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0 }}>
           <button onClick={() => navigate('/matches')} style={styles.backBtn}>←</button>
-          <div style={{marginLeft: 15}}>
-            <h2 style={{margin: 0, fontSize: 18}}>{targetUser?.name || 'Match'}</h2>
-            <p style={{margin: 0, fontSize: 12, color: '#00a884'}}>Online</p>
+          {targetUser?.avatar_url ? (
+            <img 
+              src={getMediaUrl(targetUser.avatar_url)} 
+              alt="Profile" 
+              onClick={() => setIsDpOpen(true)}
+              style={{ width: 40, height: 40, borderRadius: '50%', marginLeft: 10, objectFit: 'cover', flexShrink: 0, cursor: 'pointer' }} 
+            />
+          ) : (
+            <div style={{ width: 40, height: 40, borderRadius: '50%', backgroundColor: '#444', marginLeft: 10, flexShrink: 0 }} />
+          )}
+          <div style={{ marginLeft: 10, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap' }}>
+            <h2 style={{ margin: 0, fontSize: 16, textOverflow: 'ellipsis', overflow: 'hidden' }}>{targetUser?.name || targetUser?.username || 'Match'}</h2>
+            <p style={{ margin: 0, fontSize: 12, color: targetUser?.is_online ? '#00a884' : '#8696a0', textOverflow: 'ellipsis', overflow: 'hidden' }}>
+              {targetUser?.is_online 
+                ? 'Online' 
+                : (targetUser?.last_seen 
+                    ? `Last seen at ${new Date(targetUser.last_seen).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}` 
+                    : 'Offline')
+              }
+            </p>
           </div>
         </div>
-        <div style={{display: 'flex', gap: 15}}>
+        <div style={{ display: 'flex', gap: 15, flexShrink: 0, marginLeft: 10 }}>
           <button onClick={() => initiateCall(false)} style={styles.iconBtn}><Phone size={20} /></button>
           <button onClick={() => initiateCall(true)} style={styles.iconBtn}><Video size={20} /></button>
         </div>
       </div>
 
-      {/* CALL UI OVERLAYS */}
-      {callState === 'ringing' && (
-        <div style={styles.callOverlay}>
-          <div style={styles.callBox}>
-            <h3>Calling...</h3>
-            <button onClick={endCall} style={{...styles.callBtn, background: '#f44336'}}>End</button>
-          </div>
-        </div>
-      )}
-
-      {callState === 'incoming' && (
-        <div style={styles.callOverlay}>
-          <div style={styles.callBox}>
-            <h3>Incoming {hasVideo ? 'Video' : 'Voice'} Call</h3>
-            <div style={{display: 'flex', gap: 20}}>
-              <button onClick={acceptCall} style={{...styles.callBtn, background: '#4caf50'}}>Accept</button>
-              <button onClick={rejectCall} style={{...styles.callBtn, background: '#f44336'}}>Decline</button>
+      {/* CALL UI OVERLAY */}
+      {callState !== 'idle' && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000', zIndex: 9999, display: 'flex', flexDirection: 'column' }}>
+          <video ref={remoteVideoRef} autoPlay playsInline style={{ flex: 1, objectFit: 'cover', display: (hasVideoRef.current && callState === 'active') ? 'block' : 'none' }} />
+          <video ref={localVideoRef} autoPlay playsInline muted style={{ position: 'absolute', top: 20, right: 20, width: 120, height: 160, backgroundColor: '#222', borderRadius: 10, objectFit: 'cover', display: (hasVideoRef.current && !isCameraOff && callState === 'active') ? 'block' : 'none' }} />
+          
+          {callState === 'ringing' && (
+            <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', textAlign: 'center' }}>
+              <p style={{ fontSize: 24, marginBottom: 10 }}>Calling {targetUser?.name || 'User'}...</p>
+              <button onClick={() => endCall(true)} style={{ ...styles.iconBtn, background: '#e91e8c', borderRadius: '50%', padding: 20 }}><PhoneOff size={32} color="#fff" /></button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {callState === 'active' && (
-        <div style={styles.callOverlay}>
-          <div style={styles.activeCallBox}>
-            {hasVideo ? (
-              <>
-                <video ref={remoteVideoRef} autoPlay playsInline style={styles.remoteVideo} />
-                <video ref={localVideoRef} autoPlay playsInline muted style={styles.localVideo} />
-              </>
-            ) : (
-              <div style={styles.voiceCallAvatar}>Voice Call in Progress...</div>
-            )}
-            <button onClick={endCall} style={{...styles.callBtn, background: '#f44336', position: 'absolute', bottom: 30}}>Hang Up</button>
-          </div>
+          )}
+          
+          {callState === 'incoming' && (
+            <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', textAlign: 'center' }}>
+              <p style={{ fontSize: 24, marginBottom: 20 }}>{targetUser?.name || 'User'} is calling...</p>
+              <div style={{ display: 'flex', gap: 30 }}>
+                <button onClick={acceptCall} style={{ ...styles.iconBtn, background: '#4caf50', borderRadius: '50%', padding: 20 }}><Phone size={32} color="#fff" /></button>
+                <button onClick={rejectCall} style={{ ...styles.iconBtn, background: '#e91e8c', borderRadius: '50%', padding: 20 }}><PhoneOff size={32} color="#fff" /></button>
+              </div>
+            </div>
+          )}
+          
+          {callState === 'active' && (
+            <div style={{ position: 'absolute', bottom: 40, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 20, background: 'rgba(0,0,0,0.5)', padding: '10px 20px', borderRadius: 30 }}>
+              <button onClick={toggleMute} style={{ ...styles.iconBtn, color: isMuted ? '#e91e8c' : '#fff' }}>
+                {isMuted ? <MicOff size={24} /> : <Mic size={24} />}
+              </button>
+              <button onClick={toggleVideo} style={{ ...styles.iconBtn, color: isCameraOff ? '#e91e8c' : '#fff' }}>
+                {isCameraOff ? <VideoOff size={24} /> : <Video size={24} />}
+              </button>
+              <button onClick={() => endCall(true)} style={{ ...styles.iconBtn, background: '#e91e8c', borderRadius: '50%', padding: 10, color: '#fff' }}><PhoneOff size={24} /></button>
+            </div>
+          )}
         </div>
       )}
 
@@ -255,20 +406,24 @@ export default function HumanChat() {
       <div style={styles.chatArea}>
         {messages.map((m, i) => {
           const isMine = m.sender_id !== targetId;
-          
+
           return (
-            <div key={i} style={{...styles.msgBubble, alignSelf: isMine ? 'flex-end' : 'flex-start', background: isMine ? '#005c4b' : '#202c33'}}>
+            <div key={i} style={{ ...styles.msgBubble, alignSelf: isMine ? 'flex-end' : 'flex-start', background: isMine ? '#005c4b' : '#202c33' }}>
               {m.message_type === 'view_once' && m.content !== '[VIEWED]' ? (
                 isMine ? (
-                  <p style={{margin: 0, fontStyle: 'italic', color: '#8696a0'}}>📷 View Once Photo Sent</p>
+                  <p style={{ margin: 0, fontStyle: 'italic', color: '#8696a0' }}>📷 View Once Photo Sent</p>
                 ) : (
                   <ViewOnceImage src={m.content} onHoldComplete={() => markViewed(m.id)} />
                 )
               ) : (
-                <p style={{margin: 0}}>{m.content}</p>
+                <p style={{ margin: 0 }}>{m.content}</p>
               )}
-              <span style={{fontSize: 10, color: 'rgba(255,255,255,0.5)', alignSelf: 'flex-end', marginTop: 4}}>
-                {new Date(m.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+              <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', alignSelf: 'flex-end', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}
+                {isMine && (
+                  m.is_viewed ? <CheckCheck size={14} color="#53bdeb" /> : 
+                  (m.is_delivered !== false ? <CheckCheck size={14} color="#8696a0" /> : <Check size={14} color="#8696a0" />)
+                )}
               </span>
             </div>
           );
@@ -280,17 +435,46 @@ export default function HumanChat() {
       <div style={styles.inputArea}>
         <label style={styles.iconBtn}>
           <ImageIcon size={24} />
-          <input type="file" accept="image/*" style={{display: 'none'}} onChange={sendViewOnce} />
+          <input type="file" accept="image/*" style={{ display: 'none' }} onChange={sendViewOnce} />
         </label>
-        <input 
-          value={input} 
+        <input
+          value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && sendMessage()}
-          placeholder="Type a message..." 
+          placeholder="Type a message..."
           style={styles.input}
         />
         <button onClick={sendMessage} style={styles.iconBtn}><Send size={24} /></button>
       </div>
+
+      {/* DP VIEWER MODAL */}
+      {isDpOpen && targetUser?.avatar_url && (
+        <div 
+          onClick={() => setIsDpOpen(false)}
+          style={{
+            position: 'fixed',
+            top: 0, left: 0, right: 0, bottom: 0,
+            backgroundColor: 'rgba(0,0,0,0.9)',
+            zIndex: 9999,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
+          }}
+        >
+          <img 
+            src={getMediaUrl(targetUser.avatar_url)} 
+            alt="DP" 
+            style={{ maxWidth: '90%', maxHeight: '90%', objectFit: 'contain', borderRadius: 8 }} 
+            onClick={(e) => e.stopPropagation()} 
+          />
+          <button 
+            onClick={() => setIsDpOpen(false)}
+            style={{ position: 'absolute', top: 20, right: 20, background: 'none', border: 'none', color: '#fff', cursor: 'pointer' }}
+          >
+            <X size={32} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -298,7 +482,7 @@ export default function HumanChat() {
 // Anti-Screenshot Component
 function ViewOnceImage({ src, onHoldComplete }) {
   const [holding, setHolding] = useState(false);
-  
+
   useEffect(() => {
     const handleContextMenu = (e) => e.preventDefault();
     document.addEventListener('contextmenu', handleContextMenu);
@@ -306,14 +490,14 @@ function ViewOnceImage({ src, onHoldComplete }) {
   }, []);
 
   return (
-    <div 
-      onMouseDown={() => setHolding(true)} 
+    <div
+      onMouseDown={() => setHolding(true)}
       onMouseUp={() => { setHolding(false); onHoldComplete(); }}
       onMouseLeave={() => setHolding(false)}
       onTouchStart={() => setHolding(true)}
       onTouchEnd={() => { setHolding(false); onHoldComplete(); }}
       style={{
-        width: 200, height: 250, 
+        width: 200, height: 250,
         background: holding ? `url(${src}) center/cover` : '#333',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         borderRadius: 10, cursor: 'pointer',
@@ -322,7 +506,7 @@ function ViewOnceImage({ src, onHoldComplete }) {
         transition: 'filter 0.3s'
       }}
     >
-      {!holding && <p style={{filter: 'none', margin:0, fontWeight:'bold', textAlign:'center'}}>Hold to View<br/><span style={{fontSize: 10}}>Will disappear when released</span></p>}
+      {!holding && <p style={{ filter: 'none', margin: 0, fontWeight: 'bold', textAlign: 'center' }}>Hold to View<br /><span style={{ fontSize: 10 }}>Will disappear when released</span></p>}
     </div>
   );
 }
@@ -336,13 +520,15 @@ const styles = {
   msgBubble: { padding: '8px 12px', borderRadius: 12, maxWidth: '70%', display: 'flex', flexDirection: 'column', boxShadow: '0 1px 2px rgba(0,0,0,0.3)' },
   inputArea: { display: 'flex', padding: 15, background: '#202c33', alignItems: 'center', gap: 10 },
   input: { flex: 1, background: '#2a3942', border: 'none', borderRadius: 20, padding: '12px 20px', color: '#e9edef', outline: 'none' },
-  
+
   // Call Styles
   callOverlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.9)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' },
   callBox: { background: '#202c33', padding: 40, borderRadius: 20, textAlign: 'center' },
   callBtn: { padding: '15px 30px', border: 'none', borderRadius: 30, color: '#fff', fontSize: 16, fontWeight: 'bold', cursor: 'pointer' },
   activeCallBox: { width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', position: 'relative' },
   remoteVideo: { width: '100%', height: '100%', objectFit: 'cover' },
-  localVideo: { position: 'absolute', bottom: 20, right: 20, width: 120, height: 160, objectFit: 'cover', borderRadius: 10, border: '2px solid #fff' },
-  voiceCallAvatar: { fontSize: 24, color: '#00a884' }
+  localVideo: { position: 'absolute', top: 20, right: 20, width: 120, height: 160, objectFit: 'cover', borderRadius: 10, border: '2px solid #fff', zIndex: 5 },
+  voiceCallAvatar: { fontSize: 24, color: '#00a884' },
+  callControls: { position: 'absolute', bottom: 40, display: 'flex', gap: 25, zIndex: 10 },
+  controlBtn: { width: 60, height: 60, borderRadius: 30, border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', backdropFilter: 'blur(5px)', transition: 'all 0.2s ease', boxShadow: '0 4px 6px rgba(0,0,0,0.3)' }
 };

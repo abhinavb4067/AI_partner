@@ -31,6 +31,10 @@ class ChangePasswordRequest(BaseModel):
 class DeleteAccountRequest(BaseModel):
     password: str
 
+class FCMTokenRequest(BaseModel):
+    fcm_token: str
+
+
 
 @router.get("/me")
 async def get_profile(
@@ -158,3 +162,15 @@ async def delete_account(
     current_user.is_active = False
     db.commit()
     return {"message": "Account deactivated. We're sorry to see you go."}
+
+
+@router.post("/fcm-token")
+async def update_fcm_token(
+    req: FCMTokenRequest,
+    current_user: UserAccount = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    current_user.fcm_token = req.fcm_token
+    db.commit()
+    return {"message": "FCM token updated successfully"}
+

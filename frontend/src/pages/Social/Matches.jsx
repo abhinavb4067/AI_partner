@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import API from '../../api/api';
+import API, { getMediaUrl } from '../../api/api';
+import { X } from 'lucide-react';
 
 export default function Matches() {
   const [matches, setMatches] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [dpUrl, setDpUrl] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -38,7 +40,15 @@ export default function Matches() {
         ) : (
           matches.map(m => (
             <div key={m.match_id} style={styles.matchCard} onClick={() => navigate(`/human-chat/${m.user_id}`)}>
-              <div style={{...styles.avatar, backgroundImage: m.avatar_url ? `url(${import.meta.env.VITE_API_URL}${m.avatar_url})` : 'none', backgroundColor: '#333'}}>
+              <div 
+                style={{...styles.avatar, backgroundImage: m.avatar_url ? `url(${getMediaUrl(m.avatar_url)})` : 'none', backgroundColor: '#333'}}
+                onClick={(e) => {
+                  if (m.avatar_url) {
+                    e.stopPropagation();
+                    setDpUrl(getMediaUrl(m.avatar_url));
+                  }
+                }}
+              >
                 {!m.avatar_url && '👤'}
               </div>
               <div style={styles.info}>
@@ -50,6 +60,35 @@ export default function Matches() {
           ))
         )}
       </div>
+
+      {/* DP VIEWER MODAL */}
+      {dpUrl && (
+        <div 
+          onClick={() => setDpUrl(null)}
+          style={{
+            position: 'fixed',
+            top: 0, left: 0, right: 0, bottom: 0,
+            backgroundColor: 'rgba(0,0,0,0.9)',
+            zIndex: 9999,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
+          }}
+        >
+          <img 
+            src={dpUrl} 
+            alt="DP" 
+            style={{ maxWidth: '90%', maxHeight: '90%', objectFit: 'contain', borderRadius: 8 }} 
+            onClick={(e) => e.stopPropagation()} 
+          />
+          <button 
+            onClick={() => setDpUrl(null)}
+            style={{ position: 'absolute', top: 20, right: 20, background: 'none', border: 'none', color: '#fff', cursor: 'pointer' }}
+          >
+            <X size={32} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

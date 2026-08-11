@@ -190,4 +190,6 @@ media/
 # OS files
 .DS_Store
 Thumbs.db
-backend_env_remote.txt  
+backend_env_remote.txt
+backend/firebase_admin_sdk.json
+temp_ssh_key

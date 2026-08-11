@@ -35,11 +35,17 @@ async def save_character_post(file: UploadFile) -> tuple[str, str]:
 
 async def save_user_avatar(file: UploadFile, user_id: str) -> str:
     """Save a user avatar (overwrite if exists). Returns the public URL path."""
-    # Use a deterministic filename so old files are replaced
-    folder = settings.avatars_folder
+    folder = f"media/users/{user_id}/avatars"
     ext = _get_extension(file.content_type)
-    filename = f"{user_id}{ext}"
-    return await _write_file(file, folder, filename, "avatars")
+    filename = f"avatar{ext}"
+    return await _write_file(file, folder, filename, f"users/{user_id}/avatars")
+
+async def save_chat_image(file: UploadFile, user_id: str) -> str:
+    """Save a chat image to GCS under users/{user_id}/chat_images/."""
+    folder = f"media/users/{user_id}/chat_images"
+    ext = _get_extension(file.content_type)
+    filename = f"{uuid.uuid4().hex}{ext}"
+    return await _write_file(file, folder, filename, f"users/{user_id}/chat_images")
 
 
 async def _save_image(file: UploadFile, folder: str, url_prefix: str) -> str:
@@ -50,6 +56,8 @@ async def _save_media(file: UploadFile, folder: str, url_prefix: str, max_size: 
     filename = f"{uuid.uuid4().hex}{ext}"
     return await _write_file(file, folder, filename, url_prefix, max_size)
 
+
+from firebase_admin import storage
 
 async def _write_file(file: UploadFile, folder: str, filename: str, url_prefix: str, max_size: int = MAX_FILE_SIZE) -> str:
     if file.content_type not in ALLOWED_IMAGE_TYPES and file.content_type not in ALLOWED_VIDEO_TYPES:
@@ -65,12 +73,20 @@ async def _write_file(file: UploadFile, folder: str, filename: str, url_prefix: 
             detail=f"File too large. Maximum size is {max_size // (1024*1024)} MB.",
         )
 
-    os.makedirs(folder, exist_ok=True)
-    dest = os.path.join(folder, filename)
-    with open(dest, "wb") as f:
-        f.write(contents)
-
-    return f"/media/{url_prefix}/{filename}"
+    try:
+        bucket = storage.bucket()
+        blob = bucket.blob(f"{url_prefix}/{filename}")
+        blob.upload_from_string(contents, content_type=file.content_type)
+        blob.make_public()
+        return blob.public_url
+    except Exception as e:
+        print(f"Firebase storage upload failed: {e}")
+        # Fallback to local storage if Firebase fails
+        os.makedirs(folder, exist_ok=True)
+        dest = os.path.join(folder, filename)
+        with open(dest, "wb") as f:
+            f.write(contents)
+        return f"/media/{url_prefix}/{filename}"
 
 
 def _get_extension(content_type: str) -> str:

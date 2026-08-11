@@ -8,6 +8,46 @@ from app.core.database import SessionLocal, get_db
 from app.core.security import decode_token
 from app.models.all_models import UserAccount, HumanMessage
 from app.api.deps import get_current_user
+import firebase_admin
+from firebase_admin import messaging
+
+def send_push_notification(fcm_token: str, title: str, body: str, data: dict = None):
+    if not fcm_token:
+        return
+    try:
+        # Convert all values in data to strings, FCM requires string values
+        str_data = {}
+        if data:
+            for k, v in data.items():
+                str_data[str(k)] = str(v)
+        
+        message = messaging.Message(
+            notification=messaging.Notification(
+                title=title,
+                body=body,
+            ),
+            data=str_data,
+            token=fcm_token,
+            android=messaging.AndroidConfig(
+                priority='high',
+                notification=messaging.AndroidNotification(
+                    sound='default',
+                    channel_id='call_channel' if data and data.get("type") == "call" else 'chat_channel'
+                ),
+            ),
+            apns=messaging.APNSConfig(
+                payload=messaging.APNSPayload(
+                    aps=messaging.Aps(
+                        sound='default',
+                        content_available=True
+                    ),
+                ),
+            )
+        )
+        messaging.send(message)
+    except Exception as e:
+        print(f"Failed to send FCM: {e}")
+
 
 router = APIRouter()
 
@@ -69,11 +109,24 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
                 target_id = payload.get("target_id")
                 
                 # Handling WebRTC Signaling
-                if msg_type in ["call_request", "call_accept", "call_reject", "offer", "answer", "ice_candidate"]:
+                if msg_type in ["call_request", "call_accept", "call_reject", "offer", "answer", "ice_candidate", "call_end"]:
                     if target_id:
                         # Forward the exact signaling message to the target user
                         payload["sender_id"] = user_id
                         await manager.send_personal_message(json.dumps(payload), target_id)
+                        
+                        # Send push notification for call request if user is not connected
+                        if msg_type == "call_request" and target_id not in manager.active_connections:
+                            target_user = db.query(UserAccount).filter(UserAccount.id == target_id).first()
+                            if target_user and target_user.fcm_token:
+                                is_video = payload.get("video", False)
+                                call_type = "Video" if is_video else "Voice"
+                                send_push_notification(
+                                    fcm_token=target_user.fcm_token,
+                                    title=f"Incoming {call_type} Call",
+                                    body=f"{user.name} is calling you.",
+                                    data={"type": "call", "caller_id": user_id, "video": str(is_video)}
+                                )
                         
                 # Handling Text / Photo Messages
                 elif msg_type in ["text", "image", "view_once"]:
@@ -90,6 +143,8 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
                         db.commit()
                         db.refresh(new_msg)
                         
+                        is_delivered = target_id in manager.active_connections
+                        
                         # Forward to target
                         out_msg = {
                             "type": "new_message",
@@ -99,10 +154,25 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
                                 "receiver_id": target_id,
                                 "content": content if msg_type != "view_once" else "[HIDDEN]",
                                 "message_type": msg_type,
-                                "created_at": new_msg.created_at.isoformat() + "Z"
+                                "created_at": new_msg.created_at.isoformat() + "Z",
+                                "is_viewed": False,
+                                "is_delivered": is_delivered
                             }
                         }
-                        await manager.send_personal_message(json.dumps(out_msg), target_id)
+                        if is_delivered:
+                            await manager.send_personal_message(json.dumps(out_msg), target_id)
+                        
+                        # Push notification for chat messages if disconnected
+                        if target_id not in manager.active_connections:
+                            target_user = db.query(UserAccount).filter(UserAccount.id == target_id).first()
+                            if target_user and target_user.fcm_token:
+                                msg_text = "Sent you a photo" if msg_type == "view_once" else content
+                                send_push_notification(
+                                    fcm_token=target_user.fcm_token,
+                                    title=f"New message from {user.name}",
+                                    body=msg_text,
+                                    data={"type": "chat", "sender_id": user_id}
+                                )
                         
                         # Send ack back to sender
                         out_msg["message"]["content"] = content # Sender can always see what they sent
@@ -124,14 +194,38 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
                             }
                             await manager.send_personal_message(json.dumps(ack), msg.sender_id)
 
+                # Handling Read Receipt for standard messages
+                elif msg_type == "read":
+                    msg_id = payload.get("message_id")
+                    if msg_id:
+                        msg = db.query(HumanMessage).filter(HumanMessage.id == msg_id).first()
+                        if msg and msg.receiver_id == user_id:
+                            msg.is_viewed = True
+                            db.commit()
+                            ack = {
+                                "type": "message_read",
+                                "message_id": msg_id,
+                                "receiver_id": user_id
+                            }
+                            await manager.send_personal_message(json.dumps(ack), msg.sender_id)
+
             except json.JSONDecodeError:
                 pass
             except Exception as e:
                 print(f"WS Error: {e}")
                 
-    except WebSocketDisconnect:
-        manager.disconnect(user_id)
+    except Exception as e:
+        print(f"WebSocket closed with error: {e}")
     finally:
+        manager.disconnect(user_id)
+        # update last seen
+        db_session = SessionLocal()
+        u = db_session.query(UserAccount).filter(UserAccount.id == user_id).first()
+        if u:
+            from datetime import datetime, timezone
+            u.last_seen = datetime.now(timezone.utc)
+            db_session.commit()
+        db_session.close()
         db.close()
 
 

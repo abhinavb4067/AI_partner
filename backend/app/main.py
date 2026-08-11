@@ -19,6 +19,18 @@ import app.models.all_models  # noqa
 
 from app.api.routes import auth, chat
 from app.api.routes import admin_auth, admin, profile, payment, voice, social, ws_chat
+import firebase_admin
+from firebase_admin import credentials
+
+# Initialize Firebase Admin
+try:
+    if not firebase_admin._apps:
+        cred = credentials.Certificate("firebase_admin_sdk.json")
+        firebase_admin.initialize_app(cred, {
+            'storageBucket': 'avoiga.firebasestorage.app'
+        })
+except Exception as e:
+    print(f"Firebase Admin initialization failed: {e}")
 
 
 # ── Startup / Shutdown ────────────────────────────────────────────────────────

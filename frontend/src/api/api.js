@@ -2,6 +2,12 @@ import axios from 'axios';
 
 const BASE_URL = import.meta.env.VITE_API_URL || '';
 
+export const getMediaUrl = (url) => {
+  if (!url) return null;
+  if (url.startsWith('http') || url.startsWith('data:')) return url;
+  return `${BASE_URL || 'https://avoigabackend.ectama.com'}${url}`;
+};
+
 // ── User API instance ──────────────────────────────────────────────────────
 const API = axios.create({ baseURL: BASE_URL });
 

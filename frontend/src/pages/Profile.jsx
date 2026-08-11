@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import API from '../api/api';
+import API, { getMediaUrl } from '../api/api';
+import { X } from 'lucide-react';
 
 const TABS = ['My Profile', 'Change Password', 'Subscription', 'Danger Zone'];
 
@@ -87,6 +88,7 @@ function ProfileTab({ profile, onUpdate, card }) {
   const [email, setEmail] = useState(profile?.email || profile?.user_id || '');
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
+  const [dpUrl, setDpUrl] = useState(null);
   const fileRef = useRef();
 
   const save = async () => {
@@ -110,19 +112,30 @@ function ProfileTab({ profile, onUpdate, card }) {
     } catch (e) { alert('Upload failed'); }
   };
 
-  const avatarSrc = profile?.avatar_url ? `${import.meta.env.VITE_API_URL}${profile.avatar_url}` : null;
+  const avatarSrc = profile?.avatar_url ? getMediaUrl(profile.avatar_url) : null;
 
   return (
     <div style={card}>
       <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 24 }}>My Profile</h2>
       <div style={{ display: 'flex', alignItems: 'center', gap: 20, marginBottom: 28 }}>
-        <div style={{ position: 'relative', cursor: 'pointer' }} onClick={() => fileRef.current?.click()}>
-          <div style={{ width: 80, height: 80, borderRadius: '50%', background: 'linear-gradient(135deg,#e91e8c,#9c27b0)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 32, overflow: 'hidden' }}>
+        <div style={{ position: 'relative' }}>
+          <div 
+            style={{ width: 80, height: 80, borderRadius: '50%', background: 'linear-gradient(135deg,#e91e8c,#9c27b0)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 32, overflow: 'hidden', cursor: 'pointer' }}
+            onClick={() => {
+              if (avatarSrc) setDpUrl(avatarSrc);
+              else fileRef.current?.click();
+            }}
+          >
             {avatarSrc ? <img src={avatarSrc} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="avatar" /> : '👤'}
           </div>
-          <div style={{ position: 'absolute', bottom: 0, right: 0, background: '#e91e8c', borderRadius: '50%',
-            width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>📷</div>
+          <div 
+            style={{ position: 'absolute', bottom: 0, right: 0, background: '#e91e8c', borderRadius: '50%',
+            width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, cursor: 'pointer' }}
+            onClick={() => fileRef.current?.click()}
+          >
+            📷
+          </div>
           <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={uploadAvatar} />
         </div>
         <div>
@@ -142,6 +155,35 @@ function ProfileTab({ profile, onUpdate, card }) {
       <button className="btn-primary" onClick={save} disabled={saving} style={{ marginTop: 20 }}>
         {saving ? 'Saving...' : 'Save Changes'}
       </button>
+
+      {/* DP VIEWER MODAL */}
+      {dpUrl && (
+        <div 
+          onClick={() => setDpUrl(null)}
+          style={{
+            position: 'fixed',
+            top: 0, left: 0, right: 0, bottom: 0,
+            backgroundColor: 'rgba(0,0,0,0.9)',
+            zIndex: 9999,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
+          }}
+        >
+          <img 
+            src={dpUrl} 
+            alt="DP" 
+            style={{ maxWidth: '90%', maxHeight: '90%', objectFit: 'contain', borderRadius: 8 }} 
+            onClick={(e) => e.stopPropagation()} 
+          />
+          <button 
+            onClick={() => setDpUrl(null)}
+            style={{ position: 'absolute', top: 20, right: 20, background: 'none', border: 'none', color: '#fff', cursor: 'pointer' }}
+          >
+            <X size={32} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

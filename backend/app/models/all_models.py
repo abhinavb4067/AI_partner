@@ -62,6 +62,9 @@ class UserAccount(Base):
     credits_remaining = Column(Integer, default=50)                     # replaces tokens_left
     is_unlimited = Column(Boolean, default=False)                       # admin-granted override
     credits_reset_at = Column(DateTime, nullable=True)
+    fcm_token = Column(String, nullable=True)                           # for push notifications
+    last_seen = Column(DateTime, nullable=True)
+    show_last_seen = Column(Boolean, default=True)
 
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
