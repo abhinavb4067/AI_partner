@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Search, SlidersHorizontal, MessageCircle, Phone, CircleDashed, PhoneCall, Video, ArrowLeft, Sparkles, X } from 'lucide-react';
 import API, { getMediaUrl } from '../../api/api';
-import { X } from 'lucide-react';
 
-export default function Matches() {
+const Matches = () => {
   const [matches, setMatches] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [dpUrl, setDpUrl] = useState(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [activeFilter, setActiveFilter] = useState('All');
+  const [activeTab, setActiveTab] = useState('chats'); // 'chats', 'status', 'calls'
+  const [selectedAvatar, setSelectedAvatar] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -18,90 +21,379 @@ export default function Matches() {
       .finally(() => setLoading(false));
   }, [navigate]);
 
-  if (loading) return <div style={styles.center}>Loading matches...</div>;
+  const filtered = matches.filter((m) =>
+    (m.name || m.username || '').toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const formatTime = () =>
+    new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  if (loading) {
+    return (
+      <div style={{ minHeight: '100vh', background: '#0b141a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ width: 44, height: 44, border: '3px solid #1f2c34', borderTop: '3px solid #00a884', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  }
 
   return (
-    <div style={styles.container}>
-      {/* Header */}
-      <div style={styles.header}>
-        <button onClick={() => navigate('/discover')} style={styles.backBtn}>← Discover</button>
-        <h1 style={styles.title}>Your Matches</h1>
-        <div style={{width: 60}}></div>
-      </div>
+    <div style={{ display: 'flex', height: '100vh', background: '#0b141a', color: '#e9edef', overflow: 'hidden', fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
 
-      <div style={styles.list}>
-        {matches.length === 0 ? (
-          <div style={styles.center}>
-            <p style={{color: '#888'}}>You don't have any matches yet.</p>
-            <button onClick={() => navigate('/discover')} style={styles.primaryBtn}>
-              Start Swiping!
+      {/* ══════════════ SIDEBAR ══════════════ */}
+      <div style={{
+        width: '100%',
+        maxWidth: '420px',
+        minWidth: '280px',
+        display: 'flex',
+        flexDirection: 'column',
+        borderRight: '1px solid #1f2c34',
+        background: '#111b21',
+        flexShrink: 0,
+      }}>
+
+        {/* ── Header ── */}
+        <div style={{ background: '#202c33', padding: '14px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <button
+              onClick={() => navigate('/discover')}
+              title="Back to Discover"
+              style={{
+                background: 'none', border: 'none', color: '#8696a0', cursor: 'pointer',
+                padding: 4, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                transition: 'color 0.15s',
+              }}
+              onMouseEnter={e => e.currentTarget.style.color = '#e9edef'}
+              onMouseLeave={e => e.currentTarget.style.color = '#8696a0'}
+            >
+              <ArrowLeft size={22} />
             </button>
+            <div style={{
+              width: 36, height: 36, borderRadius: '50%',
+              background: 'linear-gradient(135deg, #e91e8c, #9c27b0)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Sparkles size={16} color="#fff" />
+            </div>
+            <span style={{ fontSize: 18, fontWeight: 600, color: '#e9edef', letterSpacing: '0.2px' }}>Matches</span>
           </div>
-        ) : (
-          matches.map(m => (
-            <div key={m.match_id} style={styles.matchCard} onClick={() => navigate(`/human-chat/${m.user_id}`)}>
-              <div 
-                style={{...styles.avatar, backgroundImage: m.avatar_url ? `url(${getMediaUrl(m.avatar_url)})` : 'none', backgroundColor: '#333'}}
-                onClick={(e) => {
-                  if (m.avatar_url) {
-                    e.stopPropagation();
-                    setDpUrl(getMediaUrl(m.avatar_url));
-                  }
+        </div>
+
+        {/* ── Top Tabs (WhatsApp style) ── */}
+        <div style={{ display: 'flex', borderBottom: '1px solid #1f2c34', background: '#202c33' }}>
+          {[
+            { id: 'chats', label: 'Chats', icon: MessageCircle },
+            { id: 'status', label: 'Status', icon: CircleDashed },
+            { id: 'calls', label: 'Calls', icon: Phone },
+          ].map(tab => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                style={{
+                  flex: 1, padding: '14px 0', border: 'none', background: 'none', cursor: 'pointer',
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
+                  color: isActive ? '#00a884' : '#8696a0',
+                  borderBottom: isActive ? '3px solid #00a884' : '3px solid transparent',
+                  transition: 'color 0.2s, border-color 0.2s',
+                  position: 'relative'
                 }}
               >
-                {!m.avatar_url && '👤'}
+                <Icon size={20} />
+                <span style={{ fontSize: 12, fontWeight: isActive ? 600 : 500 }}>{tab.label}</span>
+                {tab.id === 'status' && <span style={{ position: 'absolute', top: 12, right: '25%', width: 8, height: 8, borderRadius: '50%', background: '#00a884' }} />}
+              </button>
+            );
+          })}
+        </div>
+
+        {activeTab === 'chats' && (
+          <>
+            {/* ── Search ── */}
+            <div style={{ padding: '10px 12px 6px' }}>
+              <div style={{
+                display: 'flex', alignItems: 'center', background: '#202c33',
+                borderRadius: 10, padding: '9px 14px', gap: 10,
+              }}>
+                <Search size={15} color="#8696a0" style={{ flexShrink: 0 }} />
+                <input
+                  type="text"
+                  placeholder="Search matches…"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  style={{
+                    background: 'none', border: 'none', outline: 'none',
+                    color: '#e9edef', fontSize: 14, width: '100%',
+                  }}
+                />
+                <SlidersHorizontal size={15} color="#8696a0" style={{ flexShrink: 0, cursor: 'pointer' }} />
               </div>
-              <div style={styles.info}>
-                <h3 style={{margin: '0 0 4px', fontSize: 18}}>{m.name || m.username}</h3>
-                <p style={{margin: 0, color: '#aaa', fontSize: 14}}>@{m.username}</p>
-              </div>
-              <div style={{color: '#e91e8c', fontSize: 24}}>💬</div>
             </div>
-          ))
+
+            {/* ── Filter Pills ── */}
+            <div style={{ display: 'flex', gap: 8, padding: '4px 12px 10px', flexWrap: 'wrap' }}>
+              {['All', 'Unread', 'Favourites'].map((label) => (
+                <button key={label} onClick={() => setActiveFilter(label)} style={{
+                  padding: '5px 14px', borderRadius: 20, fontSize: 12, fontWeight: 500,
+                  border: 'none', cursor: 'pointer', transition: 'all 0.15s',
+                  background: activeFilter === label ? '#005c4b' : '#1f2c34',
+                  color: activeFilter === label ? '#e9edef' : '#8696a0',
+                }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {/* ── Match List (Chats Tab) ── */}
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              {filtered.length === 0 ? (
+                <div style={{ padding: 40, textAlign: 'center', color: '#8696a0', fontSize: 14 }}>
+                  <Search size={36} style={{ opacity: 0.3, marginBottom: 12, margin: '0 auto' }} />
+                  No matches found.
+                </div>
+              ) : (
+                filtered.map((m, idx) => (
+                  <div
+                    key={m.match_id}
+                    onClick={() => navigate(`/human-chat/${m.user_id}`)}
+                    style={{
+                      display: 'flex', padding: '12px 16px', cursor: 'pointer',
+                      transition: 'background 0.15s',
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = '#202c33'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                  >
+                    {/* Avatar */}
+                    <div 
+                      onClick={(e) => { e.stopPropagation(); setSelectedAvatar(m); }}
+                      style={{
+                        width: 48, height: 48, borderRadius: '50%', flexShrink: 0, marginRight: 14,
+                        overflow: 'hidden', background: '#333',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 20, fontWeight: 700, color: 'rgba(255,255,255,0.9)',
+                        border: '2px solid transparent', cursor: 'zoom-in', transition: 'border-color 0.2s',
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.borderColor = '#00a884'}
+                      onMouseLeave={e => e.currentTarget.style.borderColor = 'transparent'}
+                    >
+                      {m.avatar_url ? (
+                        <img src={getMediaUrl(m.avatar_url)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt={m.username} />
+                      ) : (
+                        (m.name || m.username).charAt(0).toUpperCase()
+                      )}
+                    </div>
+
+                    {/* Info */}
+                    <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', borderBottom: idx === filtered.length - 1 ? 'none' : '1px solid #1f2c34', paddingBottom: 12 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 2 }}>
+                        <h3 style={{ fontSize: 16, fontWeight: 400, color: '#e9edef', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {m.name || m.username}
+                        </h3>
+                        <span style={{ fontSize: 12, color: '#8696a0', flexShrink: 0, marginLeft: 10 }}>{formatTime()}</span>
+                      </div>
+                      <p style={{ fontSize: 14, color: '#8696a0', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        @{m.username}
+                      </p>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </>
         )}
+
+        {/* ── Status Tab ── */}
+        {activeTab === 'status' && (
+          <div style={{ flex: 1, overflowY: 'auto', padding: '16px 0' }}>
+            <div style={{ display: 'flex', padding: '0 16px', alignItems: 'center', marginBottom: 20 }}>
+              <div style={{
+                width: 48, height: 48, borderRadius: '50%', background: '#202c33',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', marginRight: 14, position: 'relative'
+              }}>
+                <span style={{ fontSize: 20 }}>👤</span>
+                <div style={{
+                  position: 'absolute', bottom: 0, right: 0, background: '#00a884',
+                  width: 18, height: 18, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  border: '2px solid #111b21', color: '#111b21', fontSize: 14, fontWeight: 'bold'
+                }}>+</div>
+              </div>
+              <div>
+                <h3 style={{ fontSize: 16, color: '#e9edef', margin: 0 }}>My status</h3>
+                <p style={{ fontSize: 14, color: '#8696a0', margin: 0 }}>Tap to add status update</p>
+              </div>
+            </div>
+
+            <div style={{ padding: '8px 16px', fontSize: 14, color: '#00a884', fontWeight: 500 }}>
+              Recent updates
+            </div>
+            
+            <div style={{ padding: 40, textAlign: 'center', color: '#8696a0', fontSize: 14 }}>
+              No recent updates
+            </div>
+          </div>
+        )}
+
+        {/* ── Calls Tab ── */}
+        {activeTab === 'calls' && (
+          <div style={{ flex: 1, overflowY: 'auto', padding: '16px 0' }}>
+            <div style={{ display: 'flex', padding: '0 16px', alignItems: 'center', marginBottom: 20, cursor: 'pointer' }}>
+              <div style={{
+                width: 48, height: 48, borderRadius: '50%', background: '#00a884',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', marginRight: 14,
+              }}>
+                <span style={{ fontSize: 24, color: '#111b21', transform: 'rotate(45deg)' }}>🔗</span>
+              </div>
+              <div>
+                <h3 style={{ fontSize: 16, color: '#e9edef', margin: 0 }}>Create call link</h3>
+                <p style={{ fontSize: 14, color: '#8696a0', margin: 0 }}>Share a link for your WhatsApp call</p>
+              </div>
+            </div>
+
+            <div style={{ padding: '8px 16px', fontSize: 14, color: '#8696a0', fontWeight: 500 }}>
+              Recent
+            </div>
+
+            <div style={{ padding: 40, textAlign: 'center', color: '#8696a0', fontSize: 14 }}>
+              No recent calls
+            </div>
+          </div>
+        )}
+
+        {/* ── Footer ── */}
+        <div style={{ padding: '12px 16px', borderTop: '1px solid #1f2c34', textAlign: 'center' }}>
+          <p style={{ fontSize: 11, color: '#3b4a54' }}>Your conversations are private</p>
+        </div>
       </div>
 
-      {/* DP VIEWER MODAL */}
-      {dpUrl && (
+      {/* ══════════════ RIGHT PANEL (md+) ══════════════ */}
+      <div style={{
+        flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+        background: 'linear-gradient(160deg, #1a2632 0%, #0d1e27 100%)',
+        borderBottom: '4px solid #00a884',
+        position: 'relative', overflow: 'hidden',
+      }}
+        className="hidden md:flex"
+      >
+        {/* Background decoration */}
+        <div style={{
+          position: 'absolute', width: 400, height: 400, borderRadius: '50%',
+          background: 'radial-gradient(circle, rgba(0,168,132,0.06) 0%, transparent 70%)',
+          top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+          pointerEvents: 'none',
+        }} />
+
+        <div style={{ textAlign: 'center', zIndex: 1, padding: '0 32px', maxWidth: 400 }}>
+          {/* Animated icon */}
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 28 }}>
+            <div style={{
+              width: 80, height: 80, borderRadius: '50%', background: '#1a2f3a',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              border: '2px solid #00a88430', boxShadow: '0 0 40px rgba(0,168,132,0.1)',
+            }}>
+              <div style={{ position: 'relative', width: 44, height: 44 }}>
+                <div style={{
+                  width: 44, height: 44, borderRadius: '50%',
+                  border: '2px solid transparent',
+                  borderTopColor: '#e91e8c',
+                  borderRightColor: '#e91e8c60',
+                  animation: 'spin 2.5s linear infinite',
+                  position: 'absolute',
+                }} />
+                <div style={{
+                  width: 30, height: 30, borderRadius: '50%',
+                  border: '2px solid transparent',
+                  borderTopColor: '#9c27b0',
+                  borderLeftColor: '#9c27b060',
+                  animation: 'spin 1.5s linear infinite reverse',
+                  position: 'absolute', top: 7, left: 7,
+                }} />
+              </div>
+            </div>
+          </div>
+
+          <h2 style={{ fontSize: 24, fontWeight: 300, color: '#e9edef', marginBottom: 10, letterSpacing: '-0.3px' }}>
+            Select a Match
+          </h2>
+          <p style={{ fontSize: 13.5, color: '#8696a0', lineHeight: 1.6, marginBottom: 28 }}>
+            Choose a match from the left to start your conversation. Find more matches by swiping in Discover!
+          </p>
+
+          {/* Bouncing dots */}
+          <div style={{ display: 'flex', justifyContent: 'center', gap: 6 }}>
+            {[0, 150, 300].map((delay) => (
+              <span key={delay} style={{
+                width: 7, height: 7, borderRadius: '50%', background: '#00a884',
+                display: 'inline-block', animation: `bounce 1.2s ease-in-out ${delay}ms infinite`,
+              }} />
+            ))}
+          </div>
+        </div>
+
+        <style>{`
+          @keyframes spin { to { transform: rotate(360deg); } }
+          @keyframes bounce {
+            0%, 80%, 100% { transform: translateY(0); opacity: 0.5; }
+            40% { transform: translateY(-10px); opacity: 1; }
+          }
+        `}</style>
+      </div>
+
+      {/* ── Avatar Modal (WhatsApp style DP popup) ── */}
+      {selectedAvatar && (
         <div 
-          onClick={() => setDpUrl(null)}
+          onClick={() => setSelectedAvatar(null)}
           style={{
-            position: 'fixed',
-            top: 0, left: 0, right: 0, bottom: 0,
-            backgroundColor: 'rgba(0,0,0,0.9)',
-            zIndex: 9999,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center'
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999
           }}
         >
-          <img 
-            src={dpUrl} 
-            alt="DP" 
-            style={{ maxWidth: '90%', maxHeight: '90%', objectFit: 'contain', borderRadius: 8 }} 
-            onClick={(e) => e.stopPropagation()} 
-          />
-          <button 
-            onClick={() => setDpUrl(null)}
-            style={{ position: 'absolute', top: 20, right: 20, background: 'none', border: 'none', color: '#fff', cursor: 'pointer' }}
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            style={{ 
+              background: '#111b21', padding: '24px', borderRadius: '12px', 
+              width: '90%', maxWidth: '360px', textAlign: 'center',
+              boxShadow: '0 8px 32px rgba(0,0,0,0.5)'
+            }}
           >
-            <X size={32} />
-          </button>
+            <div style={{ width: 250, height: 250, margin: '0 auto 20px', borderRadius: '50%', overflow: 'hidden', border: '4px solid #1f2c34', background: '#333' }}>
+              {selectedAvatar.avatar_url ? (
+                <img 
+                  src={getMediaUrl(selectedAvatar.avatar_url)}
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  alt={selectedAvatar.username}
+                />
+              ) : (
+                <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 100 }}>
+                  {(selectedAvatar.name || selectedAvatar.username).charAt(0)}
+                </div>
+              )}
+            </div>
+            <h2 style={{ color: '#e9edef', fontSize: 24, margin: '0 0 8px 0', fontWeight: 600 }}>{selectedAvatar.name || selectedAvatar.username}</h2>
+            <p style={{ color: '#8696a0', fontSize: 14, marginBottom: 24 }}>@{selectedAvatar.username}</p>
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+              <button 
+                onClick={() => navigate(`/human-chat/${selectedAvatar.user_id}`)}
+                style={{
+                  background: '#00a884', color: '#111b21', border: 'none', 
+                  padding: '12px 24px', borderRadius: '8px', fontWeight: 700, 
+                  cursor: 'pointer', fontSize: 15, display: 'flex', alignItems: 'center', gap: 8,
+                  transition: 'background 0.2s'
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = '#00cf9d'}
+                onMouseLeave={e => e.currentTarget.style.background = '#00a884'}
+              >
+                <MessageCircle size={18} />
+                Message
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
   );
-}
-
-const styles = {
-  container: { minHeight: '100vh', background: '#0a0a0f', color: '#fff', fontFamily: 'Inter, sans-serif' },
-  center: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '60vh' },
-  header: { display: 'flex', justifyContent: 'space-between', padding: '20px 30px', borderBottom: '1px solid rgba(255,255,255,0.1)' },
-  backBtn: { background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: 16 },
-  title: { fontSize: 20, margin: 0, fontWeight: 'bold' },
-  list: { padding: '20px 30px', maxWidth: 600, margin: '0 auto' },
-  matchCard: { display: 'flex', alignItems: 'center', background: '#12121a', padding: 15, borderRadius: 15, marginBottom: 15, border: '1px solid rgba(255,255,255,0.05)', cursor: 'pointer', transition: 'background 0.2s' },
-  avatar: { width: 60, height: 60, borderRadius: '50%', backgroundSize: 'cover', backgroundPosition: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 30, marginRight: 15 },
-  info: { flex: 1 },
-  primaryBtn: { marginTop: 20, padding: '12px 24px', background: 'linear-gradient(135deg, #e91e8c, #9c27b0)', border: 'none', borderRadius: 10, color: '#fff', fontWeight: 'bold', cursor: 'pointer' }
 };
+
+export default Matches;

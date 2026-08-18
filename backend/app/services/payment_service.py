@@ -40,7 +40,7 @@ class RazorpayService:
 
     @staticmethod
     def verify_signature(order_id: str, payment_id: str, signature: str) -> bool:
-        if "DUMMY" in settings.RAZORPAY_KEY_ID:
+        if not settings.RAZORPAY_KEY_ID or "DUMMY" in settings.RAZORPAY_KEY_ID:
             return True
         
         body = f"{order_id}|{payment_id}"

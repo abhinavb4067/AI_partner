@@ -2,97 +2,31 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import brand from '../config/brand';
 import API from '../api/api';
-
-const loadRazorpayScript = () => {
-  return new Promise((resolve) => {
-    if (window.Razorpay) { resolve(true); return; }
-    const script = document.createElement('script');
-    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
-    script.onload = () => resolve(true);
-    script.onerror = () => resolve(false);
-    document.body.appendChild(script);
-  });
-};
+import PaymentModal from '../components/PaymentModal';
 
 export default function Pricing() {
   const [plans, setPlans] = useState([]);
-  const [gatewayConfig, setGatewayConfig] = useState({ gateway: 'stripe', public_key: '' });
-  const [loadingPlanName, setLoadingPlanName] = useState(null);
+  const [selectedPlan, setSelectedPlan] = useState(null); // opens PaymentModal
   const navigate = useNavigate();
   const isLoggedIn = Boolean(localStorage.getItem('token'));
 
   useEffect(() => {
     API.get('/api/payment/plans').then(r => setPlans(r.data)).catch(() => {});
-    API.get('/api/payment/config').then(r => setGatewayConfig(r.data)).catch(() => {});
   }, []);
 
-  const handleSubscribe = async (plan) => {
+  const handleSubscribe = (plan) => {
     if (!isLoggedIn) { navigate('/login'); return; }
     if (plan.price_monthly === 0) { navigate('/select-character'); return; }
-    setLoadingPlanName(plan.plan_name);
+    setSelectedPlan(plan); // open our custom modal
+  };
 
-    try {
-      const res = await API.post('/api/payment/create-order', { plan_id: plan.id });
-      
-      if (res.data.gateway === 'stripe') {
-        // Stripe Flow
-        window.location.href = res.data.checkout_url;
-      } else {
-        // Razorpay Flow
-        const isLoaded = await loadRazorpayScript();
-        if (!isLoaded) throw new Error("Razorpay SDK failed to load.");
-        
-        const userInfo = JSON.parse(localStorage.getItem('user_info') || '{}');
-        
-        const options = {
-          key: res.data.key_id,
-          amount: res.data.amount,
-          currency: res.data.currency,
-          name: brand.name,
-          description: `Subscription: ${res.data.plan_name}`,
-          order_id: res.data.order_id,
-          handler: async function (response) {
-            try {
-              const verifyRes = await API.post('/api/payment/verify', {
-                plan_id: plan.id,
-                razorpay_order_id: response.razorpay_order_id,
-                razorpay_payment_id: response.razorpay_payment_id,
-                razorpay_signature: response.razorpay_signature,
-              });
-              
-              const info = JSON.parse(localStorage.getItem('user_info') || '{}');
-              info.plan_name = verifyRes.data.plan;
-              info.credits_remaining = verifyRes.data.credits;
-              info.is_unlimited = verifyRes.data.is_unlimited;
-              localStorage.setItem('user_info', JSON.stringify(info));
-              
-              alert(verifyRes.data.message);
-              navigate('/select-character');
-            } catch (err) {
-              alert(err.response?.data?.detail || 'Payment verification failed.');
-            }
-          },
-          prefill: {
-            name: userInfo.full_name || 'User',
-            email: userInfo.email || '',
-          },
-          theme: { color: "#e91e8c" },
-        };
-        
-        const rzp = new window.Razorpay(options);
-        rzp.on('payment.failed', function (response) {
-          alert("Payment Failed: " + response.error.description);
-        });
-        rzp.open();
-      }
-    } catch (e) {
-      alert(e.response?.data?.detail || e.message || 'Payment initiation failed.');
-    }
-    setLoadingPlanName(null);
+  const handlePaymentSuccess = (planName) => {
+    setSelectedPlan(null);
+    navigate('/select-character?payment=success&plan=' + encodeURIComponent(planName));
   };
 
   const PLAN_COLORS = { free: '#888', starter: '#2196f3', pro: '#9c27b0', elite: '#ffd700' };
-  const PLAN_ICONS = { free: '🆓', starter: '⭐', pro: '💜', elite: '👑' };
+  const PLAN_ICONS  = { free: '🆓', starter: '⭐', pro: '💜', elite: '👑' };
 
   return (
     <div style={{ minHeight: '100vh', background: '#0a0a0f', color: '#f0f0f0', fontFamily: "'Inter', system-ui, sans-serif" }}>
@@ -100,6 +34,15 @@ export default function Pricing() {
         .plan-card { transition: transform 0.25s, box-shadow 0.25s; }
         .plan-card:hover { transform: translateY(-8px); box-shadow: 0 24px 60px rgba(0,0,0,0.4); }
       `}</style>
+
+      {/* Custom Payment Modal */}
+      {selectedPlan && (
+        <PaymentModal
+          plan={selectedPlan}
+          onClose={() => setSelectedPlan(null)}
+          onSuccess={handlePaymentSuccess}
+        />
+      )}
 
       {/* Header */}
       <div style={{ background: '#12121a', borderBottom: '1px solid rgba(255,255,255,0.06)', padding: '16px 32px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -129,14 +72,14 @@ export default function Pricing() {
         </div>
 
         <p style={{ textAlign: 'center', color: '#444', fontSize: 13, marginTop: 40 }}>
-          Payments are secured by {gatewayConfig.gateway === 'stripe' ? 'Stripe' : 'Razorpay'} · Cancel anytime
+          Payments are secure & encrypted · Cancel anytime
         </p>
       </div>
     </div>
   );
 }
 
-function PlanCard({ plan, colors, icons, onSubscribe, loading, anyLoading }) {
+function PlanCard({ plan, colors, icons, onSubscribe }) {
   const color = colors[plan.plan_name] || '#888';
   const icon = icons[plan.plan_name] || '💎';
   const currentPlan = JSON.parse(localStorage.getItem('user_info') || '{}')?.plan_name;
@@ -168,7 +111,7 @@ function PlanCard({ plan, colors, icons, onSubscribe, loading, anyLoading }) {
         style={{ width: '100%', padding: '12px', borderRadius: 10, border: 'none', fontWeight: 700, cursor: isCurrent ? 'default' : 'pointer',
           background: isCurrent ? 'rgba(255,255,255,0.05)' : `linear-gradient(135deg,${color},${color}cc)`,
           color: isCurrent ? '#555' : plan.plan_name === 'elite' ? '#000' : '#fff', fontSize: 14 }}>
-        {isCurrent ? 'Current Plan' : plan.price_monthly === 0 ? 'Start Free' : loading ? 'Processing...' : `Upgrade to ${plan.display_name}`}
+        {isCurrent ? 'Current Plan' : plan.price_monthly === 0 ? 'Start Free' : `Upgrade to ${plan.display_name}`}
       </button>
     </div>
   );

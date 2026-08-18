@@ -247,6 +247,19 @@ export default function Home() {
             <Link key={to} to={to} style={{ color: '#555', textDecoration: 'none', fontSize: 13 }}>{label}</Link>
           ))}
         </div>
+        {/* Parent brand attribution */}
+        <a href="https://ectama.com" target="_blank" rel="noopener noreferrer"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 7, marginBottom: 20, textDecoration: 'none',
+            background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)',
+            borderRadius: 20, padding: '6px 14px' }}>
+          <div style={{ width: 18, height: 18, borderRadius: 5,
+            background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 10, fontWeight: 800, color: '#fff' }}>E</div>
+          <span style={{ fontSize: 12, color: '#555' }}>A product by</span>
+          <span style={{ fontSize: 12, fontWeight: 700, color: '#888' }}>Ectama</span>
+          <span style={{ fontSize: 10, color: '#3b82f6' }}>↗</span>
+        </a>
         <p style={{ color: '#333', fontSize: 12 }}>
           © {brand.year} {brand.name}. For adults 18+ only. AI companions are fictional.
         </p>

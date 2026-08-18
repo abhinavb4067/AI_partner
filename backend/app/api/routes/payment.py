@@ -76,7 +76,7 @@ async def create_order(
         
     else:
         # Razorpay Flow
-        receipt = f"user_{current_user.id}_plan_{plan.id}"
+        receipt = f"u{current_user.id}_p{plan.id}"[:40]
         order = RazorpayService.create_order(plan.price_monthly, plan.plan_name, receipt)
 
         payment = Payment(

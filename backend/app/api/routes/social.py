@@ -168,3 +168,43 @@ async def upload_chat_image(
     """Upload a chat image to GCS."""
     url = await save_chat_image(file, current_user.id)
     return {"url": url}
+
+
+# ── E2EE Key Exchange ─────────────────────────────────────────────────────────
+
+class PublicKeyRequest(BaseModel):
+    public_key: str  # base64-encoded X25519 public key
+
+@router.post("/public-key")
+async def register_public_key(
+    req: PublicKeyRequest,
+    current_user: UserAccount = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Register (or update) the current user's X25519 public key on the server.
+    Called once at app startup / whenever the device generates a new keypair.
+    The private key NEVER leaves the client.
+    """
+    current_user.e2e_public_key = req.public_key
+    db.commit()
+    return {"status": "ok"}
+
+@router.get("/public-key/{user_id}")
+async def get_public_key(
+    user_id: str,
+    current_user: UserAccount = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Retrieve another user's X25519 public key so the caller can
+    derive the shared secret and begin encrypted messaging.
+    """
+    user = db.query(UserAccount).filter(UserAccount.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {
+        "user_id": user.id,
+        "public_key": user.e2e_public_key  # None if they haven't registered yet
+    }
+

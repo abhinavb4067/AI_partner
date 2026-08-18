@@ -95,25 +95,29 @@ async def login(req: LoginRequest, db: Session = Depends(get_db)):
 @router.post("/google-login", response_model=TokenResponse)
 async def google_login(req: GoogleLoginRequest, db: Session = Depends(get_db)):
     try:
-        client_id = getattr(settings, "GOOGLE_CLIENT_ID", None)
+        client_id = settings.GOOGLE_CLIENT_ID if settings.GOOGLE_CLIENT_ID else None
         idinfo = id_token.verify_oauth2_token(req.credential, google_requests.Request(), client_id)
         email = idinfo['email']
         name = idinfo.get('name', '')
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid Google token")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid Google token: {str(e)}")
 
-    user = db.query(UserAccount).filter(UserAccount.user_id == email).first()
+    user = db.query(UserAccount).filter((UserAccount.user_id == email) | (UserAccount.email == email)).first()
     if not user:
         free_plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.plan_name == "free").first()
         monthly_credits = free_plan.monthly_credits if free_plan else 50
         
         import uuid
+        import re
+        
+        clean_prefix = re.sub(r'[^a-zA-Z0-9_]', '', email.split('@')[0])[:20] or "user"
+        username = f"{clean_prefix}_{str(uuid.uuid4())[:6]}"
         
         user = UserAccount(
             user_id=email,
             email=email,
-            username=email.split('@')[0] + "_" + str(uuid.uuid4())[:6],
-            name=name,
+            username=username,
+            name=name or email.split('@')[0],
             age=18,
             hashed_password="", # No password for google accounts
             plan_id=free_plan.id if free_plan else None,

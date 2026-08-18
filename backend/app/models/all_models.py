@@ -65,6 +65,7 @@ class UserAccount(Base):
     fcm_token = Column(String, nullable=True)                           # for push notifications
     last_seen = Column(DateTime, nullable=True)
     show_last_seen = Column(Boolean, default=True)
+    e2e_public_key = Column(String, nullable=True)                      # X25519 public key (base64) for E2EE chat
 
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)

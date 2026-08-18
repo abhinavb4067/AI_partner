@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Search, MoreVertical, MessageSquarePlus, SlidersHorizontal, Sparkles } from 'lucide-react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { Search, MoreVertical, MessageSquarePlus, SlidersHorizontal, Sparkles, MessageCircle, Phone, CircleDashed, PhoneCall, Video } from 'lucide-react';
 import API from '../api/api';
 import InstallPWA from '../components/InstallPWA';
 
@@ -28,8 +28,22 @@ const CharacterSelection = () => {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeFilter, setActiveFilter] = useState('All');
+  const [activeTab, setActiveTab] = useState('chats'); // 'chats', 'status', 'calls'
   const [selectedAvatar, setSelectedAvatar] = useState(null);
   const navigate = useNavigate();
+  const location = useLocation();
+  const [paymentToast, setPaymentToast] = useState(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get('payment') === 'success') {
+      const plan = params.get('plan') || 'Premium';
+      setPaymentToast(`🎉 Payment successful! You are now on the ${plan} plan.`);
+      // Clean URL without reloading
+      window.history.replaceState({}, '', '/select-character');
+      setTimeout(() => setPaymentToast(null), 5000);
+    }
+  }, [location.search]);
 
   useEffect(() => {
     const fetchCharacters = async () => {
@@ -66,6 +80,20 @@ const CharacterSelection = () => {
 
   return (
     <div style={{ display: 'flex', height: '100vh', background: '#0b141a', color: '#e9edef', overflow: 'hidden', fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
+
+      {/* ── Payment Success Toast ── */}
+      {paymentToast && (
+        <div style={{
+          position: 'fixed', top: 20, left: '50%', transform: 'translateX(-50%)',
+          zIndex: 99999, background: 'linear-gradient(135deg, #00a884, #00cf9d)',
+          color: '#fff', padding: '14px 24px', borderRadius: 14,
+          fontWeight: 600, fontSize: 15, boxShadow: '0 8px 32px rgba(0,168,132,0.4)',
+          animation: 'slideDown 0.4s ease', whiteSpace: 'nowrap',
+        }}>
+          {paymentToast}
+        </div>
+      )}
+      <style>{`@keyframes slideDown { from { opacity:0; transform: translateX(-50%) translateY(-20px); } to { opacity:1; transform: translateX(-50%) translateY(0); } }`}</style>
 
       {/* ══════════════ SIDEBAR ══════════════ */}
       <div style={{
@@ -118,136 +146,195 @@ const CharacterSelection = () => {
             >
               <div style={{ fontSize: 16 }}>❤️</div>
             </button>
-            {/* {[MessageSquarePlus, MoreVertical].map((Icon, i) => (
-              <button key={i} style={{
-                background: 'none', border: 'none', color: '#8696a0', cursor: 'pointer',
-                padding: 7, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                transition: 'background 0.15s, color 0.15s',
-              }}
-                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; e.currentTarget.style.color = '#e9edef'; }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = '#8696a0'; }}
+          </div>
+        </div>
+
+        {/* ── Top Tabs (WhatsApp style) ── */}
+        <div style={{ display: 'flex', borderBottom: '1px solid #1f2c34', background: '#202c33' }}>
+          {[
+            { id: 'chats', label: 'Chats', icon: MessageCircle },
+            { id: 'status', label: 'Status', icon: CircleDashed },
+            { id: 'calls', label: 'Calls', icon: Phone },
+          ].map(tab => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                style={{
+                  flex: 1, padding: '14px 0', border: 'none', background: 'none', cursor: 'pointer',
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
+                  color: isActive ? '#00a884' : '#8696a0',
+                  borderBottom: isActive ? '3px solid #00a884' : '3px solid transparent',
+                  transition: 'color 0.2s, border-color 0.2s',
+                  position: 'relative'
+                }}
               >
-                <Icon size={19} />
+                <Icon size={20} />
+                <span style={{ fontSize: 12, fontWeight: isActive ? 600 : 500 }}>{tab.label}</span>
+                {tab.id === 'status' && <span style={{ position: 'absolute', top: 12, right: '25%', width: 8, height: 8, borderRadius: '50%', background: '#00a884' }} />}
               </button>
-            ))} */}
-          </div>
+            );
+          })}
         </div>
 
-        {/* ── PWA Install Prompt ── */}
-        <InstallPWA />
+        {activeTab === 'chats' && (
+          <>
+            {/* ── PWA Install Prompt ── */}
+            <InstallPWA />
 
-        {/* ── Search ── */}
-        <div style={{ padding: '10px 12px 6px' }}>
-          <div style={{
-            display: 'flex', alignItems: 'center', background: '#202c33',
-            borderRadius: 10, padding: '9px 14px', gap: 10,
-          }}>
-            <Search size={15} color="#8696a0" style={{ flexShrink: 0 }} />
-            <input
-              type="text"
-              placeholder="Search companions…"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              style={{
-                background: 'none', border: 'none', outline: 'none',
-                color: '#e9edef', fontSize: 14, width: '100%',
-              }}
-            />
-            <SlidersHorizontal size={15} color="#8696a0" style={{ flexShrink: 0, cursor: 'pointer' }} />
-          </div>
-        </div>
-
-        {/* ── Filter Pills ── */}
-        <div style={{ display: 'flex', gap: 8, padding: '4px 12px 10px', flexWrap: 'wrap' }}>
-          {['All', 'Unread', 'Favourites'].map((label) => (
-            <button key={label} onClick={() => setActiveFilter(label)} style={{
-              padding: '5px 14px', borderRadius: 20, fontSize: 12, fontWeight: 500,
-              border: 'none', cursor: 'pointer', transition: 'all 0.15s',
-              background: activeFilter === label ? '#005c4b' : '#1f2c34',
-              color: activeFilter === label ? '#e9edef' : '#8696a0',
-            }}>
-              {label}
-            </button>
-          ))}
-        </div>
-
-        {/* ── Contact List ── */}
-        <div style={{ flex: 1, overflowY: 'auto' }}>
-          {filtered.length === 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '60px 20px', color: '#8696a0' }}>
-              <Search size={36} style={{ opacity: 0.3, marginBottom: 12 }} />
-              <p style={{ fontSize: 14 }}>No companions found</p>
-            </div>
-          ) : (
-            filtered.map((char) => {
-              const lastTime = char.last_message_time 
-                ? new Date(char.last_message_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }).toLowerCase()
-                : 'now';
-
-              return (
-                <button
-                  key={char.id}
-                  onClick={() => navigate(`/chat/${char.id}`)}
+            {/* ── Search ── */}
+            <div style={{ padding: '10px 12px 6px' }}>
+              <div style={{
+                display: 'flex', alignItems: 'center', background: '#202c33',
+                borderRadius: 10, padding: '9px 14px', gap: 10,
+              }}>
+                <Search size={15} color="#8696a0" style={{ flexShrink: 0 }} />
+                <input
+                  type="text"
+                  placeholder="Search companions…"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
                   style={{
-                    width: '100%', display: 'flex', alignItems: 'center',
-                    padding: '12px 16px', cursor: 'pointer', background: 'none',
-                    border: 'none', color: 'inherit', textAlign: 'left',
-                    transition: 'background 0.15s',
+                    background: 'none', border: 'none', outline: 'none',
+                    color: '#e9edef', fontSize: 14, width: '100%',
                   }}
-                  onMouseEnter={e => e.currentTarget.style.background = '#202c33'}
-                  onMouseLeave={e => e.currentTarget.style.background = 'none'}
-                >
-                  {/* Avatar */}
-                  <div 
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSelectedAvatar(char);
-                    }}
-                    style={{
-                    width: 48, height: 48, borderRadius: '50%', flexShrink: 0,
-                    background: '#1a2632',
-                    overflow: 'hidden',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
-                  }}>
-                    <img 
-                      src={char.photo_url ? `${import.meta.env.VITE_API_URL}${char.photo_url}` : `/avatars/${char.name}.jpg`} 
-                      alt={char.name} 
-                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                      onError={(e) => {
-                        e.target.style.display = 'none';
-                        e.target.parentElement.innerHTML = `<div style="font-size:18px;font-weight:600;color:#fff">${char.name[0].toUpperCase()}</div>`;
-                      }}
-                    />
-                  </div>
+                />
+                <SlidersHorizontal size={15} color="#8696a0" style={{ flexShrink: 0, cursor: 'pointer' }} />
+              </div>
+            </div>
 
-                  {/* Text info */}
-                  <div style={{ flex: 1, minWidth: 0, marginLeft: 13, borderBottom: '1px solid #1f2c34', paddingBottom: 12 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: 16, fontWeight: 500, color: '#e9edef' }}>
-                        {char.name}
-                      </span>
-                      <span style={{ fontSize: 12, color: '#00a884', fontWeight: 500 }}>{lastTime}</span>
+            {/* ── Filter Pills ── */}
+            <div style={{ display: 'flex', gap: 8, padding: '4px 12px 10px', flexWrap: 'wrap' }}>
+              {['All', 'Unread', 'Favourites'].map((label) => (
+                <button key={label} onClick={() => setActiveFilter(label)} style={{
+                  padding: '5px 14px', borderRadius: 20, fontSize: 12, fontWeight: 500,
+                  border: 'none', cursor: 'pointer', transition: 'all 0.15s',
+                  background: activeFilter === label ? '#005c4b' : '#1f2c34',
+                  color: activeFilter === label ? '#e9edef' : '#8696a0',
+                }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {/* ── Character List (Chats Tab) ── */}
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              {filtered.length === 0 ? (
+                <div style={{ padding: 40, textAlign: 'center', color: '#8696a0', fontSize: 14 }}>
+                  <Search size={36} style={{ opacity: 0.3, marginBottom: 12, margin: '0 auto' }} />
+                  No companions found.
+                </div>
+              ) : (
+                filtered.map((char, idx) => (
+                  <div
+                    key={char.id}
+                    onClick={() => navigate(`/chat/${char.id}`)}
+                    style={{
+                      display: 'flex', padding: '12px 16px', cursor: 'pointer',
+                      transition: 'background 0.15s',
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = '#202c33'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                  >
+                    {/* Avatar */}
+                    <div 
+                      onClick={(e) => { e.stopPropagation(); setSelectedAvatar(char); }}
+                      style={{
+                        width: 48, height: 48, borderRadius: '50%', flexShrink: 0, marginRight: 14,
+                        overflow: 'hidden', background: getGradient(char.name),
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 20, fontWeight: 700, color: 'rgba(255,255,255,0.9)',
+                        border: '2px solid transparent', cursor: 'zoom-in', transition: 'border-color 0.2s',
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.borderColor = '#00a884'}
+                      onMouseLeave={e => e.currentTarget.style.borderColor = 'transparent'}
+                    >
+                      {char.photo_url ? (
+                        <img src={`${import.meta.env.VITE_API_URL}${char.photo_url}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt={char.name} />
+                      ) : (
+                        char.name.charAt(0).toUpperCase()
+                      )}
                     </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 3 }}>
-                      <p style={{ fontSize: 13.5, color: '#8696a0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, marginRight: 8 }}>
-                        {char.last_message_sender === 'user' && <span style={{ color: '#8696a0', marginRight: 4 }}>You:</span>}
-                        {char.last_message}
-                      </p>
-                      <div style={{
-                        minWidth: 20, height: 20, borderRadius: 10, background: '#00a884',
-                        color: '#0b141a', fontSize: 11, fontWeight: 700,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 6px'
-                      }}>
-                        1
+
+                    {/* Info */}
+                    <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', borderBottom: idx === filtered.length - 1 ? 'none' : '1px solid #1f2c34', paddingBottom: 12 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 2 }}>
+                        <h3 style={{ fontSize: 16, fontWeight: 400, color: '#e9edef', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {char.name}
+                        </h3>
+                        <span style={{ fontSize: 12, color: '#8696a0', flexShrink: 0, marginLeft: 10 }}>{formatTime()}</span>
                       </div>
+                      <p style={{ fontSize: 14, color: '#8696a0', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {char.last_message_sender === 'user' && <span style={{ color: '#8696a0', marginRight: 4 }}>You:</span>}
+                        {char.last_message || char.about || 'Available'}
+                      </p>
                     </div>
                   </div>
-                </button>
-              );
-            })
-          )}
-        </div>
+                ))
+              )}
+            </div>
+          </>
+        )}
+
+        {/* ── Status Tab ── */}
+        {activeTab === 'status' && (
+          <div style={{ flex: 1, overflowY: 'auto', padding: '16px 0' }}>
+            <div style={{ display: 'flex', padding: '0 16px', alignItems: 'center', marginBottom: 20 }}>
+              <div style={{
+                width: 48, height: 48, borderRadius: '50%', background: '#202c33',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', marginRight: 14, position: 'relative'
+              }}>
+                <span style={{ fontSize: 20 }}>👤</span>
+                <div style={{
+                  position: 'absolute', bottom: 0, right: 0, background: '#00a884',
+                  width: 18, height: 18, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  border: '2px solid #111b21', color: '#111b21', fontSize: 14, fontWeight: 'bold'
+                }}>+</div>
+              </div>
+              <div>
+                <h3 style={{ fontSize: 16, color: '#e9edef', margin: 0 }}>My status</h3>
+                <p style={{ fontSize: 14, color: '#8696a0', margin: 0 }}>Tap to add status update</p>
+              </div>
+            </div>
+
+            <div style={{ padding: '8px 16px', fontSize: 14, color: '#00a884', fontWeight: 500 }}>
+              Recent updates
+            </div>
+            
+            <div style={{ padding: 40, textAlign: 'center', color: '#8696a0', fontSize: 14 }}>
+              No recent updates
+            </div>
+          </div>
+        )}
+
+        {/* ── Calls Tab ── */}
+        {activeTab === 'calls' && (
+          <div style={{ flex: 1, overflowY: 'auto', padding: '16px 0' }}>
+            <div style={{ display: 'flex', padding: '0 16px', alignItems: 'center', marginBottom: 20, cursor: 'pointer' }}>
+              <div style={{
+                width: 48, height: 48, borderRadius: '50%', background: '#00a884',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', marginRight: 14,
+              }}>
+                <span style={{ fontSize: 24, color: '#111b21', transform: 'rotate(45deg)' }}>🔗</span>
+              </div>
+              <div>
+                <h3 style={{ fontSize: 16, color: '#e9edef', margin: 0 }}>Create call link</h3>
+                <p style={{ fontSize: 14, color: '#8696a0', margin: 0 }}>Share a link for your WhatsApp call</p>
+              </div>
+            </div>
+
+            <div style={{ padding: '8px 16px', fontSize: 14, color: '#8696a0', fontWeight: 500 }}>
+              Recent
+            </div>
+
+            <div style={{ padding: 40, textAlign: 'center', color: '#8696a0', fontSize: 14 }}>
+              No recent calls
+            </div>
+          </div>
+        )}
 
         {/* ── Footer ── */}
         <div style={{ padding: '12px 16px', borderTop: '1px solid #1f2c34', textAlign: 'center' }}>
