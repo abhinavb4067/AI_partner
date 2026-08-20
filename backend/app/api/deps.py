@@ -26,9 +26,19 @@ def get_current_user(
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
 
-    user = db.query(UserAccount).filter(UserAccount.user_id == user_id).first()
+    user = db.query(UserAccount).filter((UserAccount.user_id == user_id) | (UserAccount.id == user_id) | (UserAccount.email == user_id)).first()
     if not user or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive")
+
+    # Single active session validation
+    token_sv = payload.get("sv")
+    if token_sv is not None and user.session_version is not None:
+        if token_sv != user.session_version:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Session expired. You were logged in from another session or device.",
+                headers={"WWW-Authenticate": "Bearer"}
+            )
 
     return user
 

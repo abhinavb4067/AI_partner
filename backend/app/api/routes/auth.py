@@ -78,12 +78,13 @@ async def register(req: RegisterWithOTPRequest, db: Session = Depends(get_db)):
         credits_remaining=monthly_credits,
         credits_reset_at=datetime.utcnow() + timedelta(days=30),
         is_active=True,
+        session_version=1,
     )
     db.add(user)
     db.commit()
     db.refresh(user)
 
-    token = create_user_token(user.user_id)
+    token = create_user_token(user.user_id, session_version=user.session_version or 1)
     return TokenResponse(
         access_token=token,
         user_id=user.user_id,
@@ -110,13 +111,16 @@ async def login(req: LoginRequest, db: Session = Depends(get_db)):
     else:
         # Set password on first login for legacy users
         user.hashed_password = hash_password(req.password)
-        db.commit()
 
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account is disabled")
 
+    # Increment session version to auto-logout any other active session
+    user.session_version = (user.session_version or 0) + 1
+    db.commit()
+
     plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.id == user.plan_id).first()
-    token = create_user_token(user.user_id)
+    token = create_user_token(user.user_id, session_version=user.session_version)
 
     return TokenResponse(
         access_token=token,
@@ -161,6 +165,7 @@ async def google_login(req: GoogleLoginRequest, db: Session = Depends(get_db)):
             credits_remaining=monthly_credits,
             credits_reset_at=datetime.utcnow() + timedelta(days=30),
             is_active=True,
+            session_version=1,
         )
         db.add(user)
         db.commit()
@@ -169,8 +174,12 @@ async def google_login(req: GoogleLoginRequest, db: Session = Depends(get_db)):
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account is disabled")
 
+    # Increment session version to auto-logout any other active session
+    user.session_version = (user.session_version or 0) + 1
+    db.commit()
+
     plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.id == user.plan_id).first()
-    token = create_user_token(user.user_id)
+    token = create_user_token(user.user_id, session_version=user.session_version)
 
     return TokenResponse(
         access_token=token,
@@ -216,6 +225,7 @@ async def reset_password(req: UnifiedResetPasswordRequest, db: Session = Depends
         if not user:
             raise HTTPException(status_code=404, detail="User account not found")
         user.hashed_password = hash_password(req.new_password)
+        user.session_version = (user.session_version or 0) + 1
         db.commit()
         return {"message": "Password has been reset successfully. You can now log in."}
 
@@ -228,6 +238,7 @@ async def reset_password(req: UnifiedResetPasswordRequest, db: Session = Depends
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         user.hashed_password = hash_password(req.new_password)
+        user.session_version = (user.session_version or 0) + 1
         db.commit()
         return {"message": "Password has been reset successfully. You can now log in."}
 

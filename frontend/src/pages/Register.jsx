@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { GoogleLogin } from '@react-oauth/google';
 import brand from '../config/brand';
-import API from '../api/api';
+import API, { broadcastAuthEvent } from '../api/api';
 
 export default function Register() {
   const [step, setStep] = useState(1); // 1: form, 2: otp
@@ -164,6 +164,7 @@ export default function Register() {
         email: d.email, name: d.name, plan_name: d.plan_name,
         credits_remaining: d.credits_remaining, is_unlimited: d.is_unlimited,
       }));
+      broadcastAuthEvent('NEW_LOGIN', { user_id: d.user_id });
       navigate('/select-character');
     } catch (err) {
       setError(err.response?.data?.detail || 'Verification failed. Please check the code.');

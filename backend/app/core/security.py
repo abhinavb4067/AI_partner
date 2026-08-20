@@ -47,9 +47,9 @@ def decode_token(token: str) -> Dict[str, Any]:
 
 
 # ── Token factories ───────────────────────────────────────────────────────────
-def create_user_token(user_id: str) -> str:
-    """Create a JWT for a regular user. Claim key: 'sub'."""
-    return create_access_token({"sub": user_id, "type": "user"})
+def create_user_token(user_id: str, session_version: int = 1) -> str:
+    """Create a JWT for a regular user. Claim keys: 'sub', 'sv'."""
+    return create_access_token({"sub": user_id, "type": "user", "sv": session_version})
 
 
 def create_admin_token(admin_id: str) -> str:

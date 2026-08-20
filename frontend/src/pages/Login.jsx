@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { GoogleLogin } from '@react-oauth/google';
 import brand from '../config/brand';
-import API from '../api/api';
+import API, { broadcastAuthEvent } from '../api/api';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -10,6 +10,13 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const navigate = useNavigate();
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('session_expired') === 'true') {
+      setError('ℹ️ You were logged out because your account was logged in from another session or tab.');
+    }
+  }, []);
 
   const handleGoogleSuccess = async (credentialResponse) => {
     setLoading(true);
@@ -24,6 +31,7 @@ export default function Login() {
         email: d.email, name: d.name, plan_name: d.plan_name,
         credits_remaining: d.credits_remaining, is_unlimited: d.is_unlimited,
       }));
+      broadcastAuthEvent('NEW_LOGIN', { user_id: d.user_id });
       navigate('/select-character');
     } catch (err) {
       setError(err.response?.data?.detail || 'Google Login failed');
@@ -45,6 +53,7 @@ export default function Login() {
         email: d.email, name: d.name, plan_name: d.plan_name,
         credits_remaining: d.credits_remaining, is_unlimited: d.is_unlimited,
       }));
+      broadcastAuthEvent('NEW_LOGIN', { user_id: d.user_id });
       navigate('/select-character');
     } catch (err) {
       setError(err.response?.data?.detail || 'Login failed');

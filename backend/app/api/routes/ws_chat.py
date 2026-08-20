@@ -1,5 +1,5 @@
 import json
-from typing import Dict, List
+from typing import Dict, List, Set
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_
@@ -8,18 +8,49 @@ from app.core.database import SessionLocal, get_db
 from app.core.security import decode_token
 from app.models.all_models import UserAccount, HumanMessage
 from app.api.deps import get_current_user
+import os
 import firebase_admin
-from firebase_admin import messaging
+from firebase_admin import credentials, messaging
+
+def init_firebase_admin():
+    if not firebase_admin._apps:
+        candidate_paths = [
+            os.path.join(os.path.dirname(__file__), "..", "..", "firebase_admin_sdk.json"),
+            os.path.join(os.path.dirname(__file__), "..", "..", "..", "firebase_admin_sdk.json"),
+            os.path.join(os.getcwd(), "firebase_admin_sdk.json"),
+            os.path.join(os.getcwd(), "backend", "firebase_admin_sdk.json"),
+            "/var/www/AI_partner/backend/firebase_admin_sdk.json",
+        ]
+        cred_path = None
+        for p in candidate_paths:
+            abs_p = os.path.abspath(p)
+            if os.path.exists(abs_p):
+                cred_path = abs_p
+                break
+        if cred_path:
+            try:
+                cred = credentials.Certificate(cred_path)
+                firebase_admin.initialize_app(cred, {
+                    'storageBucket': 'avoiga.firebasestorage.app'
+                })
+                print(f"✅ [Firebase Admin] Initialized from {cred_path}")
+            except Exception as e:
+                print(f"❌ [Firebase Admin] Initialization failed: {e}")
+
+init_firebase_admin()
 
 def send_push_notification(fcm_token: str, title: str, body: str, data: dict = None):
     if not fcm_token:
         return
     try:
+        init_firebase_admin()
         # Convert all values in data to strings, FCM requires string values
         str_data = {}
         if data:
             for k, v in data.items():
                 str_data[str(k)] = str(v)
+        str_data["title"] = str(title)
+        str_data["body"] = str(body)
         
         is_call = data and data.get("type") == "call"
         is_missed_call = data and data.get("type") == "missed_call"
@@ -82,34 +113,60 @@ def send_push_notification(fcm_token: str, title: str, body: str, data: dict = N
                 ),
             )
         )
-        messaging.send(message)
+        msg_id = messaging.send(message)
+        print(f"✅ [FCM] Notification sent successfully ({title}): {msg_id}")
     except Exception as e:
-        print(f"Failed to send FCM: {e}")
+        print(f"❌ [FCM] Failed to send FCM: {e}")
 
 
 router = APIRouter()
 
-# Connection Manager for WebSockets
+from collections import defaultdict
+
+# Connection Manager for WebSockets supporting multiple sockets per user
 class ConnectionManager:
     def __init__(self):
-        # Maps user_id to their active WebSocket
-        self.active_connections: Dict[str, WebSocket] = {}
+        # Maps user_id / alias to their set of active WebSockets
+        self.active_connections: Dict[str, Set[WebSocket]] = defaultdict(set)
 
-    async def connect(self, websocket: WebSocket, user_id: str):
+    async def connect(self, websocket: WebSocket, user_keys: list):
         await websocket.accept()
-        self.active_connections[user_id] = websocket
+        for k in user_keys:
+            if k:
+                self.active_connections[str(k)].add(websocket)
 
-    def disconnect(self, user_id: str):
-        if user_id in self.active_connections:
-            del self.active_connections[user_id]
+    def disconnect(self, websocket: WebSocket, user_keys: list):
+        for k in user_keys:
+            if k and str(k) in self.active_connections:
+                self.active_connections[str(k)].discard(websocket)
+                if not self.active_connections[str(k)]:
+                    del self.active_connections[str(k)]
 
-    async def send_personal_message(self, message: str, user_id: str):
-        if user_id in self.active_connections:
-            websocket = self.active_connections[user_id]
+    async def send_personal_message(self, message: str, target_keys: list):
+        target_list = target_keys if isinstance(target_keys, list) else [target_keys]
+        # Collect unique target websockets
+        target_sockets = set()
+        for k in target_list:
+            if k and str(k) in self.active_connections:
+                target_sockets.update(self.active_connections[str(k)])
+
+        sent = False
+        dead_sockets = []
+        for ws in target_sockets:
             try:
-                await websocket.send_text(message)
+                await ws.send_text(message)
+                sent = True
             except Exception:
-                self.disconnect(user_id)
+                dead_sockets.append(ws)
+
+        # Clean up any dead sockets
+        for dead in dead_sockets:
+            for k in list(self.active_connections.keys()):
+                self.active_connections[k].discard(dead)
+                if not self.active_connections[k]:
+                    del self.active_connections[k]
+
+        return sent
 
 manager = ConnectionManager()
 
@@ -123,7 +180,18 @@ async def get_user_from_token(token: str, db: Session) -> UserAccount:
         user_id = payload.get("sub")
         if not user_id:
             return None
-        return db.query(UserAccount).filter(UserAccount.user_id == user_id).first()
+        user = db.query(UserAccount).filter(
+            (UserAccount.user_id == user_id) | 
+            (UserAccount.id == user_id) | 
+            (UserAccount.email == user_id)
+        ).first()
+        if not user or not user.is_active:
+            return None
+        token_sv = payload.get("sv")
+        if token_sv is not None and user.session_version is not None:
+            if token_sv != user.session_version:
+                return None
+        return user
     except Exception:
         return None
 
@@ -139,7 +207,8 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
         return
         
     user_id = user.id
-    await manager.connect(websocket, user_id)
+    user_keys = [user.id, user.user_id, user.email]
+    await manager.connect(websocket, user_keys)
     
     try:
         while True:
@@ -149,6 +218,15 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
                 msg_type = payload.get("type")
                 target_id = payload.get("target_id")
                 
+                target_user = db.query(UserAccount).filter(
+                    (UserAccount.id == target_id) | 
+                    (UserAccount.user_id == target_id) | 
+                    (UserAccount.email == target_id)
+                ).first() if target_id else None
+
+                target_keys = [target_id, target_user.id, target_user.user_id, target_user.email] if target_user else [target_id]
+                actual_target_id = target_user.id if target_user else target_id
+
                 # Handling WebRTC Signaling & Calls
                 if msg_type in ["call_request", "call_accept", "call_reject", "offer", "answer", "ice_candidate", "call_end", "call_cancel"]:
                     if target_id:
@@ -158,17 +236,17 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
                         if msg_type == "call_request":
                             is_video = payload.get("video", False)
                             call_type = "Video" if is_video else "Voice"
-                            session_key = f"{user_id}_{target_id}"
+                            session_key = f"{user_id}_{actual_target_id}"
                             active_call_sessions[session_key] = {
                                 "caller_id": user_id,
-                                "target_id": target_id,
+                                "target_id": actual_target_id,
                                 "caller_name": user.name or "User",
                                 "video": is_video,
                                 "state": "ringing",
                                 "started_at": datetime.utcnow()
                             }
+                            print(f"📞 [Call Request] From {user.name} ({user_id}) to {target_user.name if target_user else target_id} (Has FCM: {bool(target_user and target_user.fcm_token)})")
                             # Send live ringing push notification
-                            target_user = db.query(UserAccount).filter(UserAccount.id == target_id).first()
                             if target_user and target_user.fcm_token:
                                 send_push_notification(
                                     fcm_token=target_user.fcm_token,
@@ -176,16 +254,18 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
                                     body=f"{user.name or 'User'} is calling you...",
                                     data={"type": "call", "caller_id": user_id, "caller_name": user.name or "User", "video": str(is_video)}
                                 )
+                            elif target_user:
+                                print(f"⚠️ [Call Request] Target user {target_user.email} has no FCM token registered.")
 
                         # 2. Call Accepted
                         elif msg_type == "call_accept":
-                            for k in [f"{target_id}_{user_id}", f"{user_id}_{target_id}"]:
+                            for k in [f"{actual_target_id}_{user_id}", f"{user_id}_{actual_target_id}"]:
                                 if k in active_call_sessions:
                                     active_call_sessions[k]["state"] = "active"
 
                         # 3. Call Ended / Rejected / Cancelled (Missed Call Handling)
                         elif msg_type in ["call_reject", "call_end", "call_cancel"]:
-                            session = active_call_sessions.pop(f"{user_id}_{target_id}", None) or active_call_sessions.pop(f"{target_id}_{user_id}", None)
+                            session = active_call_sessions.pop(f"{user_id}_{actual_target_id}", None) or active_call_sessions.pop(f"{actual_target_id}_{user_id}", None)
                             if session and session.get("state") == "ringing":
                                 # Call was missed / unanswered
                                 s_caller_id = session["caller_id"]
@@ -216,24 +296,23 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
                                         "message_type": "missed_call",
                                         "created_at": missed_msg.created_at.isoformat() + "Z",
                                         "is_viewed": False,
-                                        "is_delivered": s_callee_id in manager.active_connections
+                                        "is_delivered": any(k in manager.active_connections for k in target_keys)
                                     }
                                 }
                                 await manager.send_personal_message(json.dumps(out_missed), s_caller_id)
-                                await manager.send_personal_message(json.dumps(out_missed), s_callee_id)
+                                await manager.send_personal_message(json.dumps(out_missed), target_keys)
 
                                 # Send Missed Call FCM Push Notification to Callee
-                                callee_user = db.query(UserAccount).filter(UserAccount.id == s_callee_id).first()
-                                if callee_user and callee_user.fcm_token:
+                                if target_user and target_user.fcm_token:
                                     send_push_notification(
-                                        fcm_token=callee_user.fcm_token,
+                                        fcm_token=target_user.fcm_token,
                                         title="📞 Missed Call",
                                         body=f"You missed a {s_call_type} call from {s_caller_name}",
                                         data={"type": "missed_call", "caller_id": s_caller_id, "caller_name": s_caller_name, "video": str(s_is_video)}
                                     )
 
                         # Forward signaling payload to the peer
-                        await manager.send_personal_message(json.dumps(payload), target_id)
+                        await manager.send_personal_message(json.dumps(payload), target_keys)
                         
                 # Handling Text / Photo Messages
                 elif msg_type in ["text", "image", "view_once"]:
@@ -242,7 +321,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
                         # Save to DB
                         new_msg = HumanMessage(
                             sender_id=user_id,
-                            receiver_id=target_id,
+                            receiver_id=actual_target_id,
                             content=content,
                             message_type=msg_type
                         )
@@ -250,7 +329,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
                         db.commit()
                         db.refresh(new_msg)
                         
-                        is_delivered = target_id in manager.active_connections
+                        is_delivered = any(k in manager.active_connections for k in target_keys)
                         
                         # Forward to target
                         out_msg = {
@@ -258,7 +337,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
                             "message": {
                                 "id": new_msg.id,
                                 "sender_id": user_id,
-                                "receiver_id": target_id,
+                                "receiver_id": actual_target_id,
                                 "content": content if msg_type != "view_once" else "[HIDDEN]",
                                 "message_type": msg_type,
                                 "created_at": new_msg.created_at.isoformat() + "Z",
@@ -266,20 +345,20 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
                                 "is_delivered": is_delivered
                             }
                         }
-                        if is_delivered:
-                            await manager.send_personal_message(json.dumps(out_msg), target_id)
+                        # Always send WebSocket personal message
+                        await manager.send_personal_message(json.dumps(out_msg), target_keys)
                         
-                        # Push notification for chat messages if disconnected
-                        if target_id not in manager.active_connections:
-                            target_user = db.query(UserAccount).filter(UserAccount.id == target_id).first()
-                            if target_user and target_user.fcm_token:
-                                msg_text = "Sent you a photo" if msg_type == "view_once" else content
-                                send_push_notification(
-                                    fcm_token=target_user.fcm_token,
-                                    title=f"New message from {user.name}",
-                                    body=msg_text,
-                                    data={"type": "chat", "sender_id": user_id}
-                                )
+                        # Send high-priority FCM Push Notification for chat messages
+                        if target_user and target_user.fcm_token:
+                            msg_preview = "Sent you a photo 📷" if msg_type == "view_once" else (
+                                "Sent you a message 💬" if (content.startswith("U2FsdGVk") or len(content) > 100) else content
+                            )
+                            send_push_notification(
+                                fcm_token=target_user.fcm_token,
+                                title=f"{user.name or 'User'}",
+                                body=msg_preview,
+                                data={"type": "chat", "sender_id": user_id, "sender_name": user.name or "User"}
+                            )
                         
                         # Send ack back to sender
                         out_msg["message"]["content"] = content # Sender can always see what they sent
@@ -324,7 +403,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
     except Exception as e:
         print(f"WebSocket closed with error: {e}")
     finally:
-        manager.disconnect(user_id)
+        manager.disconnect(websocket, user_keys)
         # update last seen
         db_session = SessionLocal()
         u = db_session.query(UserAccount).filter(UserAccount.id == user_id).first()

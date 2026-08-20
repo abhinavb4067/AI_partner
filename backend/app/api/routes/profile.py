@@ -174,3 +174,24 @@ async def update_fcm_token(
     db.commit()
     return {"message": "FCM token updated successfully"}
 
+
+@router.post("/test-push")
+async def test_push(
+    current_user: UserAccount = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not current_user.fcm_token:
+        raise HTTPException(status_code=400, detail="No push notification token registered. Please enable notifications in your browser.")
+    
+    from app.api.routes.ws_chat import send_push_notification
+    try:
+        send_push_notification(
+            fcm_token=current_user.fcm_token,
+            title="🔔 Notification Test",
+            body="Push notifications are working perfectly on your device!",
+            data={"type": "chat", "sender_id": "system"}
+        )
+        return {"message": "Test push notification sent to your device!"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to send push: {str(e)}")
+

@@ -156,6 +156,9 @@ function ProfileTab({ profile, onUpdate, card }) {
         {saving ? 'Saving...' : 'Save Changes'}
       </button>
 
+      {/* Push & Calling Notifications Card */}
+      <NotificationSettingsCard />
+
       {/* DP VIEWER MODAL */}
       {dpUrl && (
         <div 
@@ -333,6 +336,91 @@ function DangerTab({ card, navigate }) {
         {loading ? 'Deleting...' : 'Delete My Account'}
       </button>
       <style>{`.inp{width:100%;padding:12px 14px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:10px;color:#f0f0f0;font-size:14px;outline:none;box-sizing:border-box;} .inp:focus{border-color:#e91e8c;}`}</style>
+    </div>
+  );
+}
+
+function NotificationSettingsCard() {
+  const [permission, setPermission] = useState(typeof Notification !== 'undefined' ? Notification.permission : 'unsupported');
+  const [testing, setTesting] = useState(false);
+  const [statusMsg, setStatusMsg] = useState('');
+
+  const enableNotifications = async () => {
+    setStatusMsg('Requesting permission...');
+    const { requestFirebaseNotificationPermission } = await import('../firebase');
+    const token = await requestFirebaseNotificationPermission();
+    if (typeof Notification !== 'undefined') {
+      setPermission(Notification.permission);
+    }
+    if (token) {
+      setStatusMsg('✓ Push notifications enabled successfully!');
+    } else {
+      setStatusMsg('⚠️ Permission was not granted or not supported.');
+    }
+  };
+
+  const sendTestPush = async () => {
+    setTesting(true);
+    setStatusMsg('');
+    try {
+      const res = await API.post('/api/profile/test-push');
+      setStatusMsg('✓ ' + (res.data.message || 'Notification sent! Check your device.'));
+    } catch (err) {
+      setStatusMsg('❌ ' + (err.response?.data?.detail || 'Failed to send test push. Please enable notifications first.'));
+    }
+    setTesting(false);
+  };
+
+  return (
+    <div style={{
+      marginTop: 28,
+      padding: 20,
+      background: 'rgba(255,255,255,0.03)',
+      border: '1px solid rgba(255,255,255,0.08)',
+      borderRadius: 12,
+    }}>
+      <h3 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px 0', display: 'flex', alignItems: 'center', gap: 8 }}>
+        🔔 Push & Live Calling Notifications
+      </h3>
+      <p style={{ fontSize: 13, color: '#888', margin: '0 0 16px 0', lineHeight: 1.4 }}>
+        Enable browser notifications so incoming calls and new messages ring even when you are in another tab or have the app closed.
+      </p>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        {permission !== 'granted' ? (
+          <button
+            className="btn-primary"
+            onClick={enableNotifications}
+            style={{ fontSize: 13, padding: '10px 18px', display: 'flex', alignItems: 'center', gap: 6 }}
+          >
+            🔔 Enable Notifications
+          </button>
+        ) : (
+          <span style={{ fontSize: 13, color: '#22c55e', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+            ✅ Notifications Enabled
+          </span>
+        )}
+
+        <button
+          className="btn-ghost"
+          onClick={sendTestPush}
+          disabled={testing}
+          style={{ fontSize: 13, padding: '10px 18px' }}
+        >
+          {testing ? 'Sending...' : '🚀 Send Test Notification'}
+        </button>
+      </div>
+
+      {statusMsg && (
+        <p style={{
+          marginTop: 12,
+          fontSize: 13,
+          color: statusMsg.startsWith('✓') ? '#22c55e' : '#f87171',
+          fontWeight: 500,
+        }}>
+          {statusMsg}
+        </p>
+      )}
     </div>
   );
 }

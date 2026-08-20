@@ -22,12 +22,12 @@ messaging.onBackgroundMessage(function(payload) {
   const callerId = data.caller_id || '';
   const callerName = data.caller_name || 'Someone';
 
-  let notificationTitle = payload.notification?.title;
-  let notificationBody = payload.notification?.body;
+  let notificationTitle = payload.notification?.title || data.title;
+  let notificationBody = payload.notification?.body || data.body;
   let actions = [];
 
   if (isCall) {
-    notificationTitle = notificationTitle || "Incoming Call";
+    notificationTitle = notificationTitle || `Incoming ${data.video === 'true' || data.video === 'True' ? 'Video' : 'Voice'} Call`;
     notificationBody = notificationBody || `${callerName} is calling you...`;
     actions = [
       { action: 'answer', title: '📞 Answer' },

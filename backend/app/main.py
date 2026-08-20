@@ -22,21 +22,50 @@ from app.api.routes import admin_auth, admin, profile, payment, voice, social, w
 import firebase_admin
 from firebase_admin import credentials
 
-# Initialize Firebase Admin
-try:
+# Initialize Firebase Admin with robust path resolution
+def init_firebase_admin():
     if not firebase_admin._apps:
-        cred = credentials.Certificate("firebase_admin_sdk.json")
-        firebase_admin.initialize_app(cred, {
-            'storageBucket': 'avoiga.firebasestorage.app'
-        })
-except Exception as e:
-    print(f"Firebase Admin initialization failed: {e}")
+        candidate_paths = [
+            os.path.join(os.path.dirname(__file__), "..", "firebase_admin_sdk.json"),
+            os.path.join(os.path.dirname(__file__), "..", "..", "firebase_admin_sdk.json"),
+            os.path.join(os.getcwd(), "firebase_admin_sdk.json"),
+            os.path.join(os.getcwd(), "backend", "firebase_admin_sdk.json"),
+            "/var/www/AI_partner/backend/firebase_admin_sdk.json",
+        ]
+        cred_path = None
+        for p in candidate_paths:
+            abs_p = os.path.abspath(p)
+            if os.path.exists(abs_p):
+                cred_path = abs_p
+                break
+        if cred_path:
+            try:
+                cred = credentials.Certificate(cred_path)
+                firebase_admin.initialize_app(cred, {
+                    'storageBucket': 'avoiga.firebasestorage.app'
+                })
+                print(f"✅ [Firebase Admin] Initialized successfully from {cred_path}")
+            except Exception as e:
+                print(f"❌ [Firebase Admin] Failed with cert {cred_path}: {e}")
+        else:
+            print("⚠️ [Firebase Admin] firebase_admin_sdk.json not found in candidate paths")
+
+init_firebase_admin()
 
 
 # ── Startup / Shutdown ────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Create tables that don't yet exist (safe — won't drop existing)
+    # Create tables / columns that don't yet exist (safe — won't drop existing)
+    try:
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE user_accounts ADD COLUMN IF NOT EXISTS session_version INTEGER DEFAULT 1;"))
+            conn.execute(text("UPDATE user_accounts SET session_version = 1 WHERE session_version IS NULL;"))
+            conn.commit()
+    except Exception as e:
+        print(f"session_version migration notice: {e}")
+
     try:
         from app.models.all_models import EmailOTP
         EmailOTP.__table__.create(bind=engine, checkfirst=True)

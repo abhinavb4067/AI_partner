@@ -17,12 +17,34 @@ API.interceptors.request.use((config) => {
   return config;
 });
 
+// Broadcast channel for multi-tab auth synchronization
+export const authChannel = typeof window !== 'undefined' && 'BroadcastChannel' in window
+  ? new BroadcastChannel('auth_sync_channel')
+  : null;
+
+export const broadcastAuthEvent = (type, data = {}) => {
+  if (authChannel) {
+    try {
+      authChannel.postMessage({ type, ...data });
+    } catch (e) {
+      console.warn('BroadcastChannel error', e);
+    }
+  }
+};
+
 API.interceptors.response.use(
   (res) => res,
   (error) => {
     if (error.response?.status === 401) {
-      localStorage.clear();
-      window.location.href = '/login';
+      const isLoginOrRegister = window.location.pathname.includes('/login') || window.location.pathname.includes('/register');
+      if (!isLoginOrRegister) {
+        const detail = error.response?.data?.detail || '';
+        const isSessionExpired = detail.toLowerCase().includes('session') || detail.toLowerCase().includes('expired');
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        broadcastAuthEvent('SESSION_TERMINATED', { reason: 'session_expired' });
+        window.location.href = isSessionExpired ? '/login?session_expired=true' : '/login';
+      }
     }
     return Promise.reject(error);
   }

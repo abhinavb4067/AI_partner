@@ -17,21 +17,33 @@ export const messaging = getMessaging(app);
 
 export const requestFirebaseNotificationPermission = async () => {
   try {
+    if (!('Notification' in window) || !('serviceWorker' in navigator)) {
+      console.warn('Push notifications not supported on this browser');
+      return null;
+    }
+
     const permission = await Notification.requestPermission();
     if (permission === 'granted') {
-      // You should replace vapidKey with your actual public VAPID key from Firebase Console -> Project Settings -> Cloud Messaging -> Web configuration
+      const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js', { scope: '/' });
+      await navigator.serviceWorker.ready;
+
       const token = await getToken(messaging, { 
-          // vapidKey: "YOUR_PUBLIC_VAPID_KEY_HERE" 
+        serviceWorkerRegistration: registration,
       });
+
       if (token) {
-        console.log("FCM Token:", token);
+        console.log("✅ [FCM] Acquired valid Token:", token);
         // Send token to our backend
         await API.post('/api/profile/fcm-token', { fcm_token: token });
+        return token;
       }
+    } else {
+      console.warn("Notification permission was not granted:", permission);
     }
   } catch (error) {
     console.error("Firebase permission error:", error);
   }
+  return null;
 };
 
 export const setupMessageListener = (onMessageCallback) => {
