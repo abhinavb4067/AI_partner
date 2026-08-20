@@ -215,3 +215,16 @@ class HumanMessage(Base):
     message_type = Column(String(20), default="text") # 'text', 'image', 'view_once', 'call_request'
     is_viewed = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+# ── Email OTP Verification ───────────────────────────────────────────────────
+class EmailOTP(Base):
+    __tablename__ = "email_otps"
+
+    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
+    email = Column(String(255), index=True, nullable=False)
+    otp_code = Column(String(10), nullable=False)
+    purpose = Column(String(30), nullable=False) # 'register', 'forgot_password'
+    expires_at = Column(DateTime, nullable=False)
+    attempts = Column(Integer, default=0) # max 5 failed attempts
+    is_verified = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)

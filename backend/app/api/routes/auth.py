@@ -1,40 +1,76 @@
-"""User auth routes — register, login, /me."""
+"""User auth routes — register, login, OTP verification, forgot-password, /me."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import hash_password, verify_password, create_user_token, create_reset_token, verify_reset_token
 from app.models.all_models import SubscriptionPlan, UserAccount
-from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse, GoogleLoginRequest, ForgotPasswordRequest, ResetPasswordRequest
+from app.schemas.auth import (
+    LoginRequest,
+    RegisterRequest,
+    RegisterWithOTPRequest,
+    SendRegisterOTPRequest,
+    SendForgotPasswordOTPRequest,
+    ResetPasswordWithOTPRequest,
+    OTPResponse,
+    TokenResponse,
+    GoogleLoginRequest,
+    ForgotPasswordRequest,
+    ResetPasswordRequest,
+)
 from app.api.deps import get_current_user
+from app.services.otp_service import OTPService
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 from app.core.config import settings
-import resend
 import os
 
 router = APIRouter()
 
 
+@router.post("/send-register-otp", response_model=OTPResponse)
+async def send_register_otp(req: SendRegisterOTPRequest, db: Session = Depends(get_db)):
+    """Generates and sends a 5-minute email verification OTP before account creation."""
+    clean_email = req.email.lower().strip()
+    clean_username = req.username.lower().replace(" ", "").strip()
+
+    # Check if duplicate email or username
+    if db.query(UserAccount).filter((UserAccount.user_id == clean_email) | (UserAccount.email == clean_email)).first():
+        raise HTTPException(status_code=400, detail="Email already registered. Please login instead.")
+
+    if db.query(UserAccount).filter(UserAccount.username == clean_username).first():
+        raise HTTPException(status_code=400, detail="Username already taken. Please choose another.")
+
+    return OTPService.generate_and_send_otp(db=db, email=clean_email, purpose="register")
+
+
 @router.post("/register", response_model=TokenResponse)
-async def register(req: RegisterRequest, db: Session = Depends(get_db)):
-    # Check duplicate
-    if db.query(UserAccount).filter(UserAccount.user_id == req.email).first() or db.query(UserAccount).filter(UserAccount.email == req.email).first():
+async def register(req: RegisterWithOTPRequest, db: Session = Depends(get_db)):
+    clean_email = req.email.lower().strip()
+    clean_username = req.username.lower().replace(" ", "").strip()
+
+    # Verify OTP first
+    OTPService.verify_otp(db=db, email=clean_email, otp_code=req.otp, purpose="register", consume=True)
+
+    # Check duplicate again before insert
+    if db.query(UserAccount).filter((UserAccount.user_id == clean_email) | (UserAccount.email == clean_email)).first():
         raise HTTPException(status_code=400, detail="Email already registered")
-        
-    if db.query(UserAccount).filter(UserAccount.username == req.username).first():
+
+    if db.query(UserAccount).filter(UserAccount.username == clean_username).first():
         raise HTTPException(status_code=400, detail="Username already taken")
 
     free_plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.plan_name == "free").first()
     monthly_credits = free_plan.monthly_credits if free_plan else 50
 
     user = UserAccount(
-        user_id=req.email,
-        email=req.email,
-        username=req.username,
+        user_id=clean_email,
+        email=clean_email,
+        username=clean_username,
         name=req.name,
         age=req.age,
         hashed_password=hash_password(req.password),
@@ -61,7 +97,8 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
 
 @router.post("/login", response_model=TokenResponse)
 async def login(req: LoginRequest, db: Session = Depends(get_db)):
-    user = db.query(UserAccount).filter(UserAccount.user_id == req.email).first()
+    clean_email = req.email.lower().strip()
+    user = db.query(UserAccount).filter((UserAccount.user_id == clean_email) | (UserAccount.email == clean_email)).first()
 
     if not user:
         raise HTTPException(status_code=401, detail="Invalid email or password")
@@ -145,58 +182,56 @@ async def google_login(req: GoogleLoginRequest, db: Session = Depends(get_db)):
         is_unlimited=user.is_unlimited,
     )
 
-@router.post("/forgot-password")
-async def forgot_password(req: ForgotPasswordRequest, db: Session = Depends(get_db)):
-    user = db.query(UserAccount).filter(UserAccount.user_id == req.email).first()
-    if not user:
-        return {"message": "If that email is in our system, we sent a reset link."}
-    
-    token = create_reset_token(user.user_id)
-    reset_link = f"{settings.FRONTEND_URL.rstrip('/')}/reset-password?token={token}"
 
-    if settings.RESEND_API_KEY:
-        resend.api_key = settings.RESEND_API_KEY
-        
-        template_path = os.path.join(os.path.dirname(__file__), "..", "..", "templates", "emails", "reset_password.html")
-        try:
-            with open(template_path, "r", encoding="utf-8") as f:
-                html_content = f.read()
-            html_content = html_content.replace("{{ reset_link }}", reset_link)
-            html_content = html_content.replace("{{ current_year }}", str(datetime.utcnow().year))
-            html_content = html_content.replace("{{ project_name }}", settings.PROJECT_NAME)
-        except FileNotFoundError:
-            # Fallback if template is missing
-            html_content = f"<p>Hello,</p><p>You requested a password reset. Click the link below to set a new password:</p><p><a href='{reset_link}'>Reset Password</a></p><p>If you didn't request this, you can safely ignore this email.</p>"
-        
-        try:
-            resend.Emails.send({
-                "from": f"{settings.PROJECT_NAME} <onboarding@resend.dev>",
-                "to": [req.email],
-                "subject": f"Reset your {settings.PROJECT_NAME} Password",
-                "html": html_content
-            })
-            print(f"Password reset email sent to {req.email}")
-        except Exception as e:
-            print(f"Failed to send email: {e}")
-            print(f"\n\n--- PASSWORD RESET LINK (Fallback) ---\n{reset_link}\n--------------------------------------\n\n")
-    else:
-        print(f"\n\n--- PASSWORD RESET LINK (Testing) ---\n{reset_link}\n--------------------------------------\n\n")
-        
-    return {"message": "If that email is in our system, we sent a reset link."}
+@router.post("/forgot-password", response_model=OTPResponse)
+async def forgot_password(req: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    clean_email = req.email.lower().strip()
+    user = db.query(UserAccount).filter((UserAccount.user_id == clean_email) | (UserAccount.email == clean_email)).first()
+    if not user:
+        # Don't leak user existence; return standard message with simulated countdown
+        return OTPResponse(
+            message="If this email is registered, a 6-digit verification code has been sent.",
+            cooldown_seconds=60,
+            expires_in_seconds=300
+        )
+
+    return OTPService.generate_and_send_otp(db=db, email=clean_email, purpose="forgot_password")
+
+
+# Unified Reset Password Schema supporting both OTP and legacy JWT token
+class UnifiedResetPasswordRequest(BaseModel):
+    email: Optional[EmailStr] = None
+    otp: Optional[str] = None
+    token: Optional[str] = None
+    new_password: str
+
 
 @router.post("/reset-password")
-async def reset_password(req: ResetPasswordRequest, db: Session = Depends(get_db)):
-    email = verify_reset_token(req.token)
-    if not email:
-        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
-        
-    user = db.query(UserAccount).filter(UserAccount.user_id == email).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-        
-    user.hashed_password = hash_password(req.new_password)
-    db.commit()
-    return {"message": "Password has been reset successfully"}
+async def reset_password(req: UnifiedResetPasswordRequest, db: Session = Depends(get_db)):
+    # Method 1: Reset using 6-Digit OTP (5-minute limit)
+    if req.otp and req.email:
+        clean_email = req.email.lower().strip()
+        OTPService.verify_otp(db=db, email=clean_email, otp_code=req.otp, purpose="forgot_password", consume=True)
+        user = db.query(UserAccount).filter((UserAccount.user_id == clean_email) | (UserAccount.email == clean_email)).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User account not found")
+        user.hashed_password = hash_password(req.new_password)
+        db.commit()
+        return {"message": "Password has been reset successfully. You can now log in."}
+
+    # Method 2: Legacy token fallback
+    if req.token:
+        email = verify_reset_token(req.token)
+        if not email:
+            raise HTTPException(status_code=400, detail="Invalid or expired reset link")
+        user = db.query(UserAccount).filter((UserAccount.user_id == email) | (UserAccount.email == email)).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        user.hashed_password = hash_password(req.new_password)
+        db.commit()
+        return {"message": "Password has been reset successfully. You can now log in."}
+
+    raise HTTPException(status_code=400, detail="Email and 6-digit OTP are required to reset password.")
 
 
 @router.get("/me")

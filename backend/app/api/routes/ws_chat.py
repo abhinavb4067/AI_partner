@@ -21,6 +21,41 @@ def send_push_notification(fcm_token: str, title: str, body: str, data: dict = N
             for k, v in data.items():
                 str_data[str(k)] = str(v)
         
+        is_call = data and data.get("type") == "call"
+        is_missed_call = data and data.get("type") == "missed_call"
+        caller_id = data.get("caller_id", "") if (is_call or is_missed_call) else ""
+
+        # WebPush specific config for browsers
+        if is_call:
+            webpush_actions = [
+                messaging.WebpushNotificationAction(action="answer", title="📞 Answer Call"),
+                messaging.WebpushNotificationAction(action="decline", title="❌ Decline")
+            ]
+        elif is_missed_call:
+            webpush_actions = [
+                messaging.WebpushNotificationAction(action="call_back", title="📞 Call Back"),
+                messaging.WebpushNotificationAction(action="view_chat", title="💬 View Chat")
+            ]
+        else:
+            webpush_actions = None
+
+        webpush = messaging.WebpushConfig(
+            headers={"Urgency": "high"},
+            notification=messaging.WebpushNotification(
+                title=title,
+                body=body,
+                icon="/icon-192.png",
+                badge="/favicon.svg",
+                tag=f"incoming_call_{caller_id}" if is_call else (f"missed_call_{caller_id}" if is_missed_call else "chat_msg"),
+                renotify=True,
+                require_interaction=True if is_call else False,
+                vibrate=[500, 250, 500, 250, 500, 250, 500, 250, 500, 250, 1000] if is_call else [200, 100, 200],
+                actions=webpush_actions,
+                data=str_data
+            ),
+            data=str_data
+        )
+
         message = messaging.Message(
             notification=messaging.Notification(
                 title=title,
@@ -28,11 +63,14 @@ def send_push_notification(fcm_token: str, title: str, body: str, data: dict = N
             ),
             data=str_data,
             token=fcm_token,
+            webpush=webpush,
             android=messaging.AndroidConfig(
                 priority='high',
                 notification=messaging.AndroidNotification(
                     sound='default',
-                    channel_id='call_channel' if data and data.get("type") == "call" else 'chat_channel'
+                    channel_id='call_channel' if (is_call or is_missed_call) else 'chat_channel',
+                    priority='max',
+                    visibility='public'
                 ),
             ),
             apns=messaging.APNSConfig(
@@ -75,6 +113,9 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# In-memory tracking for active call sessions
+active_call_sessions: Dict[str, dict] = {}
+
 
 async def get_user_from_token(token: str, db: Session) -> UserAccount:
     try:
@@ -108,25 +149,91 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
                 msg_type = payload.get("type")
                 target_id = payload.get("target_id")
                 
-                # Handling WebRTC Signaling
-                if msg_type in ["call_request", "call_accept", "call_reject", "offer", "answer", "ice_candidate", "call_end"]:
+                # Handling WebRTC Signaling & Calls
+                if msg_type in ["call_request", "call_accept", "call_reject", "offer", "answer", "ice_candidate", "call_end", "call_cancel"]:
                     if target_id:
-                        # Forward the exact signaling message to the target user
                         payload["sender_id"] = user_id
-                        await manager.send_personal_message(json.dumps(payload), target_id)
-                        
-                        # Send push notification for call request if user is not connected
-                        if msg_type == "call_request" and target_id not in manager.active_connections:
+
+                        # 1. Call Request (Live Calling Push)
+                        if msg_type == "call_request":
+                            is_video = payload.get("video", False)
+                            call_type = "Video" if is_video else "Voice"
+                            session_key = f"{user_id}_{target_id}"
+                            active_call_sessions[session_key] = {
+                                "caller_id": user_id,
+                                "target_id": target_id,
+                                "caller_name": user.name or "User",
+                                "video": is_video,
+                                "state": "ringing",
+                                "started_at": datetime.utcnow()
+                            }
+                            # Send live ringing push notification
                             target_user = db.query(UserAccount).filter(UserAccount.id == target_id).first()
                             if target_user and target_user.fcm_token:
-                                is_video = payload.get("video", False)
-                                call_type = "Video" if is_video else "Voice"
                                 send_push_notification(
                                     fcm_token=target_user.fcm_token,
                                     title=f"Incoming {call_type} Call",
-                                    body=f"{user.name} is calling you.",
-                                    data={"type": "call", "caller_id": user_id, "video": str(is_video)}
+                                    body=f"{user.name or 'User'} is calling you...",
+                                    data={"type": "call", "caller_id": user_id, "caller_name": user.name or "User", "video": str(is_video)}
                                 )
+
+                        # 2. Call Accepted
+                        elif msg_type == "call_accept":
+                            for k in [f"{target_id}_{user_id}", f"{user_id}_{target_id}"]:
+                                if k in active_call_sessions:
+                                    active_call_sessions[k]["state"] = "active"
+
+                        # 3. Call Ended / Rejected / Cancelled (Missed Call Handling)
+                        elif msg_type in ["call_reject", "call_end", "call_cancel"]:
+                            session = active_call_sessions.pop(f"{user_id}_{target_id}", None) or active_call_sessions.pop(f"{target_id}_{user_id}", None)
+                            if session and session.get("state") == "ringing":
+                                # Call was missed / unanswered
+                                s_caller_id = session["caller_id"]
+                                s_callee_id = session["target_id"]
+                                s_caller_name = session.get("caller_name", "User")
+                                s_is_video = session.get("video", False)
+                                s_call_type = "Video" if s_is_video else "Voice"
+
+                                # Save Missed Call in DB
+                                missed_msg = HumanMessage(
+                                    sender_id=s_caller_id,
+                                    receiver_id=s_callee_id,
+                                    content=f"Missed {s_call_type} call",
+                                    message_type="missed_call"
+                                )
+                                db.add(missed_msg)
+                                db.commit()
+                                db.refresh(missed_msg)
+
+                                # Broadcast message to both users
+                                out_missed = {
+                                    "type": "new_message",
+                                    "message": {
+                                        "id": missed_msg.id,
+                                        "sender_id": s_caller_id,
+                                        "receiver_id": s_callee_id,
+                                        "content": missed_msg.content,
+                                        "message_type": "missed_call",
+                                        "created_at": missed_msg.created_at.isoformat() + "Z",
+                                        "is_viewed": False,
+                                        "is_delivered": s_callee_id in manager.active_connections
+                                    }
+                                }
+                                await manager.send_personal_message(json.dumps(out_missed), s_caller_id)
+                                await manager.send_personal_message(json.dumps(out_missed), s_callee_id)
+
+                                # Send Missed Call FCM Push Notification to Callee
+                                callee_user = db.query(UserAccount).filter(UserAccount.id == s_callee_id).first()
+                                if callee_user and callee_user.fcm_token:
+                                    send_push_notification(
+                                        fcm_token=callee_user.fcm_token,
+                                        title="📞 Missed Call",
+                                        body=f"You missed a {s_call_type} call from {s_caller_name}",
+                                        data={"type": "missed_call", "caller_id": s_caller_id, "caller_name": s_caller_name, "video": str(s_is_video)}
+                                    )
+
+                        # Forward signaling payload to the peer
+                        await manager.send_personal_message(json.dumps(payload), target_id)
                         
                 # Handling Text / Photo Messages
                 elif msg_type in ["text", "image", "view_once"]:

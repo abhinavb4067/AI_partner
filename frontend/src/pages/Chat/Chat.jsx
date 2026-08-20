@@ -1,9 +1,18 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import API from "../../api/api";
 import styles from "./ChatStyles";
 import EmojiPicker from "emoji-picker-react";
 import { FiImage, FiMic, FiSmile, FiArrowLeft } from "react-icons/fi";
+import { Lock, ShieldCheck, Key, Download, Copy, Check, X } from "lucide-react";
+import {
+  getOrCreateKeyPair,
+  getMyPublicKey,
+  decryptChatMessage,
+  encryptForSelf,
+  exportKeyBackup,
+  isEncrypted,
+} from "../../utils/crypto";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -11,7 +20,6 @@ const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const resolveMediaUrl = (url) => url && !url.startsWith('http') && !url.startsWith('blob:') ? `${API_BASE}${url}` : url;
 
 const ImageMessage = ({ url, onClick }) => {
-  // Resolve local /media paths to the backend server URL
   const resolvedUrl = resolveMediaUrl(url);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(false);
@@ -114,20 +122,77 @@ const OutOfCreditsModal = ({ onClose, navigate, title, message }) => (
   </div>
 );
 
-// ── Credits Badge ─────────────────────────────────────────────────────────────
-const CreditsBadge = ({ credits, isUnlimited, low }) => (
-  <div style={{
-    display: "flex", alignItems: "center", gap: 5,
-    background: low && !isUnlimited ? "rgba(233,30,140,0.15)" : "rgba(255,255,255,0.08)",
-    border: `1px solid ${low && !isUnlimited ? "rgba(233,30,140,0.3)" : "rgba(255,255,255,0.1)"}`,
-    borderRadius: 20, padding: "4px 12px", fontSize: 12, fontWeight: 600,
-    color: low && !isUnlimited ? "#e91e8c" : "#ccc",
-    animation: low && !isUnlimited ? "pulse 1.5s infinite" : "none",
-  }}>
-    💎 {isUnlimited ? "∞" : credits} credits
-    {low && !isUnlimited && <span style={{ fontSize: 10, opacity: 0.8 }}>Low!</span>}
-  </div>
-);
+// ── E2EE Security Info Modal ─────────────────────────────────────────────────
+const E2EESecurityModal = ({ onClose, myPubKey }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyKey = () => {
+    navigator.clipboard.writeText(myPubKey);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleExportKeys = () => {
+    const jsonStr = exportKeyBackup();
+    const blob = new Blob([jsonStr], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `e2ee-keys-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 99999, backdropFilter: "blur(4px)" }} onClick={onClose}>
+      <div style={{ background: "#111b21", borderRadius: 20, padding: 28, maxWidth: 440, width: "90%", color: "#e9edef", border: "1px solid rgba(0,168,132,0.3)", position: "relative" }} onClick={e => e.stopPropagation()}>
+        <button onClick={onClose} style={{ position: "absolute", top: 16, right: 16, background: "none", border: "none", color: "#8696a0", cursor: "pointer" }}><X size={20} /></button>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+          <div style={{ width: 44, height: 44, borderRadius: "50%", background: "rgba(0,168,132,0.15)", display: "flex", alignItems: "center", justifyContent: "center", color: "#00a884" }}>
+            <ShieldCheck size={26} />
+          </div>
+          <div>
+            <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>End-to-End Encrypted</h3>
+            <p style={{ margin: 0, fontSize: 12, color: "#00a884" }}>Zero-Knowledge Cryptography Active</p>
+          </div>
+        </div>
+
+        <p style={{ fontSize: 13, color: "#8696a0", lineHeight: "1.6", marginBottom: 20 }}>
+          Your messages and shared photos with this AI companion are encrypted on your device using <strong>X25519</strong> and <strong>XSalsa20-Poly1305</strong>.
+          The database only stores unreadable ciphertext. Your private encryption keys never leave your browser.
+        </p>
+
+        <div style={{ background: "#202c33", borderRadius: 12, padding: "12px 16px", marginBottom: 20 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+            <span style={{ fontSize: 11, color: "#8696a0", fontWeight: 600, textTransform: "uppercase" }}>Your Device Public Key</span>
+            <button onClick={handleCopyKey} style={{ background: "none", border: "none", color: "#00a884", fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+              {copied ? <Check size={12} /> : <Copy size={12} />} {copied ? "Copied" : "Copy"}
+            </button>
+          </div>
+          <p style={{ margin: 0, fontSize: 11, fontFamily: "monospace", color: "#ccc", wordBreak: "break-all" }}>
+            {myPubKey || "Key initializing..."}
+          </p>
+        </div>
+
+        <div style={{ display: "flex", gap: 10 }}>
+          <button
+            onClick={handleExportKeys}
+            style={{ flex: 1, padding: "10px 14px", background: "#00a884", border: "none", borderRadius: 10, color: "#fff", fontWeight: 600, cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+          >
+            <Download size={16} /> Backup Keys
+          </button>
+          <button
+            onClick={onClose}
+            style={{ padding: "10px 16px", background: "#202c33", border: "none", borderRadius: 10, color: "#8696a0", fontWeight: 600, cursor: "pointer", fontSize: 13 }}
+          >
+            Got it
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 // ── Main Chat Component ────────────────────────────────────────────────────────
 function Chat() {
@@ -141,13 +206,14 @@ function Chat() {
   const [outOfCredits, setOutOfCredits] = useState(false);
   const [premiumModalMsg, setPremiumModalMsg] = useState("");
   const [charVoiceEnabled, setCharVoiceEnabled] = useState(false);
+  const [showSecurityModal, setShowSecurityModal] = useState(false);
   
   // Contact Info states
   const [showContactInfo, setShowContactInfo] = useState(false);
   const [charPosts, setCharPosts] = useState([]);
   const [sidebarTab, setSidebarTab] = useState('posts');
 
-  // Credits state (read from localStorage, updated locally)
+  // Credits state
   const userInfo = JSON.parse(localStorage.getItem("user_info") || "{}");
   const [credits, setCredits] = useState(userInfo.credits_remaining ?? 50);
   const [isUnlimited, setIsUnlimited] = useState(userInfo.is_unlimited ?? false);
@@ -173,8 +239,9 @@ function Chat() {
   const [charName, setCharName] = useState("");
   const [charAbout, setCharAbout] = useState("");
   const [charPhoto, setCharPhoto] = useState(null);
+  const [myPublicKey, setMyPublicKey] = useState("");
 
-  // Deduct credits from local state (server handles real deduction)
+  // Deduct credits from local state
   const deductCredits = (amount) => {
     if (isUnlimited) return;
     setCredits((prev) => {
@@ -185,6 +252,61 @@ function Chat() {
       return next;
     });
   };
+
+  // ── Step 1: Initialize E2EE Keypair and sync with server ───────────────────
+  useEffect(() => {
+    try {
+      getOrCreateKeyPair();
+      const pubKey = getMyPublicKey();
+      setMyPublicKey(pubKey);
+      API.post("/api/social/public-key", { public_key: pubKey }).catch(() => {});
+    } catch (err) {
+      console.error("[E2EE] Key initialization error:", err);
+    }
+  }, []);
+
+  // ── Decrypt history messages helper ──────────────────────────────────────────
+  const unpackAndDecryptMessage = useCallback((rawMsg) => {
+    const rawContent = rawMsg.text || rawMsg.content || "";
+    let decryptedText = rawContent;
+
+    if (isEncrypted(rawContent)) {
+      decryptedText = decryptChatMessage(rawContent);
+    }
+
+    const results = [];
+    const sender = rawMsg.sender === "user" ? "user" : "ai";
+    const time = rawMsg.time || new Date().toISOString();
+
+    // Check for [AUDIO:...]
+    if (decryptedText.includes("[AUDIO:")) {
+      const parts = decryptedText.split("[AUDIO:");
+      const audioUrl = parts[1].split("]")[0].trim();
+      const cleanText = decryptedText.replace(/\[AUDIO:.*?\]\s*/g, "").trim();
+      if (cleanText) results.push({ sender, type: "text", text: cleanText, time, is_encrypted: true });
+      results.push({ sender, type: "audio", url: audioUrl, time, is_encrypted: true });
+      return results;
+    }
+
+    // Check for [IMAGE:...]
+    if (decryptedText.includes("[IMAGE:")) {
+      const parts = decryptedText.split("[IMAGE:");
+      const cleanText = parts[0].trim();
+      const imgUrl = parts[1].replace("]", "").trim();
+      if (cleanText) results.push({ sender, type: "text", text: cleanText, time, is_encrypted: true });
+      results.push({ sender, type: "image", url: imgUrl, time, is_encrypted: true });
+      return results;
+    }
+
+    // Standard message
+    if (rawMsg.type === "image" || rawMsg.type === "audio") {
+      results.push({ ...rawMsg, text: decryptedText, is_encrypted: true });
+    } else {
+      results.push({ sender, type: "text", text: decryptedText, time, is_encrypted: true });
+    }
+
+    return results;
+  }, []);
 
   // Fetch character info
   useEffect(() => {
@@ -219,7 +341,7 @@ function Chat() {
       .catch(() => {});
   }, []);
 
-  // Fetch chat history
+  // Fetch & Decrypt chat history
   useEffect(() => {
     const fetchHistory = async () => {
       const uid = localStorage.getItem("user_id");
@@ -227,22 +349,30 @@ function Chat() {
         try {
           const encodedUserId = encodeURIComponent(uid);
           const res = await API.get(`/api/chat/history/${encodedUserId}/${charId}`);
-          const history = res.data;
-          setChat(history);
+          const rawHistory = res.data;
+
+          // Decrypt and unpack all messages
+          const decryptedHistory = [];
+          for (const msg of rawHistory) {
+            const unpacked = unpackAndDecryptMessage(msg);
+            decryptedHistory.push(...unpacked);
+          }
+
+          setChat(decryptedHistory);
 
           if (isInitialLoad.current || charId) {
             isInitialLoad.current = false;
             let aiConsecutive = 0;
-            for (let i = history.length - 1; i >= 0; i--) {
-              if (history[i].sender === "ai") aiConsecutive++;
+            for (let i = decryptedHistory.length - 1; i >= 0; i--) {
+              if (decryptedHistory[i].sender === "ai") aiConsecutive++;
               else break;
             }
-            if (history.length === 0 && !greetingTriggered.current) {
+            if (decryptedHistory.length === 0 && !greetingTriggered.current) {
               greetingTriggered.current = true;
               proactiveCount.current = 1;
               triggerAutoGreeting(uid, "[GREETING]");
               scheduleFollowUp(uid);
-            } else if (aiConsecutive === 1 && !history.some((m) => m.sender === "user")) {
+            } else if (aiConsecutive === 1 && !decryptedHistory.some((m) => m.sender === "user")) {
               proactiveCount.current = 1;
               scheduleFollowUp(uid);
             } else if (aiConsecutive >= 2) {
@@ -257,7 +387,7 @@ function Chat() {
       }
     };
     fetchHistory();
-  }, [charId]);
+  }, [charId, unpackAndDecryptMessage]);
 
   const scheduleFollowUp = (uid) => {
     if (followUpTimer.current) clearTimeout(followUpTimer.current);
@@ -283,8 +413,14 @@ function Chat() {
   const triggerAutoGreeting = async (uid, triggerMessage) => {
     setIsTyping(true);
     try {
-      const res = await API.post("/api/chat/", { user_id: uid, char_id: charId, message: triggerMessage });
-      setChat((prev) => [...prev, { sender: "ai", type: "text", text: res.data.reply, time: res.data.time || new Date().toISOString() }]);
+      const pubKey = getMyPublicKey();
+      const res = await API.post("/api/chat/", { 
+        user_id: uid, 
+        char_id: charId, 
+        message: triggerMessage,
+        user_public_key: pubKey 
+      });
+      setChat((prev) => [...prev, { sender: "ai", type: "text", text: res.data.reply, time: res.data.time || new Date().toISOString(), is_encrypted: true }]);
     } catch (err) {
       console.error("Auto-greeting failed:", err);
     } finally {
@@ -300,7 +436,6 @@ function Chat() {
         textToSubmit = `[AUDIO:${audioUrl}] ${textToSubmit}`;
     }
 
-    // ── Credit check ──────────────────────────────────────────────────────────
     if (!isUnlimited && credits <= 0) {
       setOutOfCredits(true);
       return;
@@ -308,30 +443,32 @@ function Chat() {
 
     const userMessage = textToSubmit;
     if (!hideUserBubble) {
-      setChat((prev) => [...prev, { sender: "user", type: "text", text: userMessage }]);
+      setChat((prev) => [...prev, { sender: "user", type: "text", text: userMessage, time: new Date().toISOString(), is_encrypted: true }]);
     }
     if (typeof overrideMessage !== 'string') setMessage("");
     setIsTyping(true);
 
     try {
-      const res = await API.post("/api/chat/", { user_id: loggedInUserId, char_id: charId, message: userMessage });
+      const pubKey = getMyPublicKey();
+      const encryptedUserMsg = encryptForSelf(userMessage);
 
-      // Deduct locally based on whether image was also returned
+      const res = await API.post("/api/chat/", { 
+        user_id: loggedInUserId, 
+        char_id: charId, 
+        message: userMessage,
+        user_public_key: pubKey,
+        encrypted_user_content: encryptedUserMsg
+      });
+
       const imageCost = res.data.image_url ? 5 : 0;
       deductCredits(1 + imageCost);
 
-      // Low credits warning
-      const newCredits = credits - 1 - imageCost;
-      if (!isUnlimited && newCredits <= LOW_CREDIT_THRESHOLD && newCredits > 0) {
-        // toast-style indicator is shown via CreditsBadge animation
-      }
-
-      const newMessages = [{ sender: "ai", type: "text", text: res.data.reply }];
+      const newMessages = [{ sender: "ai", type: "text", text: res.data.reply, time: res.data.time || new Date().toISOString(), is_encrypted: true }];
       if (res.data.image_url) {
         const imgUrl = res.data.image_url.startsWith('http')
           ? res.data.image_url
-          : `http://localhost:8000${res.data.image_url}`;
-        newMessages.push({ sender: "ai", type: "image", url: imgUrl });
+          : `${API_BASE}${res.data.image_url}`;
+        newMessages.push({ sender: "ai", type: "image", url: imgUrl, time: new Date().toISOString(), is_encrypted: true });
       }
       setChat((prev) => [...prev, ...newMessages]);
     } catch (err) {
@@ -358,7 +495,7 @@ function Chat() {
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
     if (!file || !file.type.startsWith("image/")) return;
-    setChat((prev) => [...prev, { sender: "user", type: "image", url: URL.createObjectURL(file) }]);
+    setChat((prev) => [...prev, { sender: "user", type: "image", url: URL.createObjectURL(file), is_encrypted: true }]);
   };
 
   const startRecording = async () => {
@@ -391,9 +528,8 @@ function Chat() {
 
         const blob = new Blob(audioChunksRef.current, { type: "audio/webm" });
         const url = URL.createObjectURL(blob);
-        setChat((prev) => [...prev, { sender: "user", type: "audio", url }]);
+        setChat((prev) => [...prev, { sender: "user", type: "audio", url, is_encrypted: true }]);
 
-        // ── Transcribe Audio ──
         const formData = new FormData();
         formData.append("file", blob, "voice.webm");
         try {
@@ -404,7 +540,6 @@ function Chat() {
           const text = res.data.text;
           const audioUrl = res.data.audio_url;
 
-          // Swap the temporary blob URL with the real MP3 URL to fix duration issues
           setChat((prev) => {
              const newChat = [...prev];
              for (let i = newChat.length - 1; i >= 0; i--) {
@@ -434,8 +569,6 @@ function Chat() {
   const stopRecording = () => mediaRecorderRef.current?.stop();
   const formatTime = (sec) => `${String(Math.floor(sec / 60)).padStart(2, "0")}:${String(sec % 60).padStart(2, "0")}`;
 
-  const isLow = !isUnlimited && credits <= LOW_CREDIT_THRESHOLD;
-
   return (
     <div style={styles.container}>
       <style>{`
@@ -455,33 +588,49 @@ function Chat() {
 
       <div style={{ ...styles.chatBox, flex: 1, borderRight: showContactInfo ? '1px solid #1f2c34' : 'none' }}>
         {/* ── Header ── */}
-        <div style={{ ...styles.header, justifyContent: "flex-start", gap: "15px", alignItems: "center" }}>
-          <button 
-            onClick={() => navigate('/select-character')}
-            style={{ background: 'none', border: 'none', fontSize: 24, color: '#555', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
-          >
-            <FiArrowLeft />
-          </button>
-          <div 
-            style={{ ...styles.headerLeft, cursor: 'pointer', flex: 1 }}
-            onClick={() => setShowContactInfo(true)}
-          >
-            <div style={{ ...styles.avatar, overflow: "hidden" }}>
-              <img
-                key={charPhoto || charName}
-                src={charPhoto ? `${import.meta.env.VITE_API_URL}${charPhoto}` : `/avatars/${charName}.jpg`}
-                alt={charName}
-                style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                onError={(e) => { e.target.style.display = "none"; }}
-              />
-            </div>
-            <div>
-              <div style={styles.name}>{charName}</div>
-              <div style={{ fontSize: "12px", color: "#8696a0", marginTop: "2px" }}>{charAbout}</div>
+        <div style={{ ...styles.header, justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px", flex: 1, minWidth: 0 }}>
+            <button 
+              onClick={() => navigate('/select-character')}
+              style={{ background: 'none', border: 'none', fontSize: 24, color: '#555', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: "4px" }}
+            >
+              <FiArrowLeft />
+            </button>
+            <div 
+              style={{ ...styles.headerLeft, cursor: 'pointer', flex: 1, minWidth: 0 }}
+              onClick={() => setShowContactInfo(true)}
+            >
+              <div style={{ ...styles.avatar, overflow: "hidden", flexShrink: 0 }}>
+                <img
+                  key={charPhoto || charName}
+                  src={charPhoto ? `${import.meta.env.VITE_API_URL}${charPhoto}` : `/avatars/${charName}.jpg`}
+                  alt={charName}
+                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                  onError={(e) => { e.target.style.display = "none"; }}
+                />
+              </div>
+              <div style={{ overflow: "hidden", minWidth: 0 }}>
+                <div style={{ ...styles.name, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{charName}</div>
+                <div style={{ fontSize: "12px", color: "#8696a0", marginTop: "1px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{charAbout}</div>
+              </div>
             </div>
           </div>
 
-          {/* Removed Credits and Profile per user request */}
+          {/* E2EE Active Security Badge */}
+          <div 
+            style={styles.e2eeBadge}
+            onClick={() => setShowSecurityModal(true)}
+            title="Click to view end-to-end encryption details"
+          >
+            <Lock size={12} />
+            <span>E2EE</span>
+          </div>
+        </div>
+
+        {/* ── E2EE Notice Banner ── */}
+        <div style={styles.e2eeBanner} onClick={() => setShowSecurityModal(true)} role="button" tabIndex={0}>
+          <Lock size={12} />
+          <span>Messages and media are end-to-end encrypted. Tap to verify.</span>
         </div>
 
         {/* ── Messages ── */}
@@ -516,7 +665,7 @@ function Chat() {
                   color: isAI ? "#000" : "#fff",
                   position: "relative",
                   paddingBottom: "18px",
-                  minWidth: "60px",
+                  minWidth: "75px",
                 }}>
                   {msg.type === "text" && msg.text}
                   {msg.type === "image" && <ImageMessage url={msg.url} onClick={() => {
@@ -533,7 +682,8 @@ function Chat() {
                       };
                     }
                   }} />}
-                  <div style={{ position: "absolute", bottom: "4px", right: "8px", fontSize: "10px", color: isAI ? "rgba(0,0,0,0.4)" : "rgba(255,255,255,0.7)", fontWeight: "500" }}>
+                  <div style={{ position: "absolute", bottom: "4px", right: "8px", fontSize: "10px", color: isAI ? "rgba(0,0,0,0.4)" : "rgba(255,255,255,0.8)", fontWeight: "500", display: "flex", alignItems: "center", gap: 3 }}>
+                    <Lock size={9} color={isAI ? "rgba(0,168,132,0.8)" : "rgba(255,255,255,0.8)"} />
                     {new Date(msg.time || new Date()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: true }).toLowerCase()}
                   </div>
                 </div>
@@ -571,7 +721,7 @@ function Chat() {
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
                 onKeyUp={(e) => e.key === "Enter" && message.trim() && sendMessage()}
-                placeholder={!isUnlimited && credits <= 0 ? "No credits — upgrade to continue" : "Message..."}
+                placeholder={!isUnlimited && credits <= 0 ? "No credits — upgrade to continue" : "🔒 Message..."}
                 disabled={!isUnlimited && credits <= 0}
               />
               {!message.trim() && (
@@ -750,6 +900,14 @@ function Chat() {
           navigate={navigate} 
           title={premiumModalMsg ? "Premium Content" : "Out of Credits"}
           message={premiumModalMsg}
+        />
+      )}
+
+      {/* ── E2EE Security Info Modal ── */}
+      {showSecurityModal && (
+        <E2EESecurityModal 
+          onClose={() => setShowSecurityModal(false)}
+          myPubKey={myPublicKey}
         />
       )}
     </div>

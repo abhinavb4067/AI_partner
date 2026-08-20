@@ -68,3 +68,51 @@ class ResetPasswordRequest(BaseModel):
         if not re.search(r"\d", v):
             raise ValueError("Password must contain at least one number")
         return v
+
+
+class SendRegisterOTPRequest(BaseModel):
+    email: EmailStr
+    username: str
+
+
+class RegisterWithOTPRequest(BaseModel):
+    name: str
+    email: EmailStr
+    username: str
+    age: int
+    password: str
+    otp: str
+
+    @field_validator("password")
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        if not re.search(r"\d", v):
+            raise ValueError("Password must contain at least one number")
+        return v
+
+
+class SendForgotPasswordOTPRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordWithOTPRequest(BaseModel):
+    email: EmailStr
+    otp: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        if not re.search(r"\d", v):
+            raise ValueError("Password must contain at least one number")
+        return v
+
+
+class OTPResponse(BaseModel):
+    message: str
+    cooldown_seconds: int = 60
+    expires_in_seconds: int = 300

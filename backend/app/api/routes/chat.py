@@ -9,6 +9,7 @@ from app.services.ai_service import AIService
 from app.services.image_service import ImageService
 from app.services.memory_service import MemoryService
 from app.schemas.chat import ChatRequest
+from app.utils.crypto import encrypt_for_user, is_encrypted_payload
 
 router = APIRouter()
 
@@ -46,7 +47,6 @@ def clean_ai_reply(raw: str) -> str:
     raw = re.sub(r'^\s*\{', '', raw).strip()   # leading lone {
 
     # ── Case 4: Strip AI "Meta-Commentary" Filler Phrases ───────────────────
-    # Remove phrases like "Here is that dirty text:", "Sure, here's a reply:", etc.
     filler_patterns = [
         r"^here's that (dirty |naughty |flirty )?text:?\s*",
         r"^here is that (dirty |naughty |flirty )?text:?\s*",
@@ -90,10 +90,13 @@ async def get_characters(user_id: str = None, db: Session = Depends(get_db)):
         # Determine the preview text
         last_message_sender = None
         if last_msg:
-            # Clean up the content (strip image tags)
-            preview = re.sub(r"\[IMAGE:.*?\]", "📷 Sent a photo", last_msg.content).strip()
-            # Truncate
-            preview = (preview[:50] + "...") if len(preview) > 50 else preview
+            if is_encrypted_payload(last_msg.content):
+                preview = "🔒 Encrypted message"
+            else:
+                # Clean up the content (strip image tags)
+                preview = re.sub(r"\[IMAGE:.*?\]", "📷 Sent a photo", last_msg.content).strip()
+                # Truncate
+                preview = (preview[:50] + "...") if len(preview) > 50 else preview
             last_message_sender = last_msg.sender
         else:
             # PROACTIVE: If no history, show a "waiting for you" message
@@ -146,7 +149,6 @@ async def get_character_posts(char_id: str, db: Session = Depends(get_db)):
     ]
 
 
-
 @router.post("/")
 async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     # 1. Fetch Character and User from DB
@@ -157,6 +159,11 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
     user = db.query(UserAccount).filter(UserAccount.user_id == request.user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+
+    # Update user's public key if provided
+    if request.user_public_key and user.e2e_public_key != request.user_public_key:
+        user.e2e_public_key = request.user_public_key
+        db.commit()
 
     # 1.1 Credit Gating
     is_photo_request = any(w in request.message.lower() for w in [
@@ -185,6 +192,9 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
 
     chat_history = []
     for msg in recent_messages:
+        # Skip raw encrypted payloads from being fed directly to Ollama
+        if is_encrypted_payload(msg.content):
+            continue
         role = "user" if msg.sender == "user" else "assistant"
         # Strip image tags from history so the AI doesn't get confused
         content = re.sub(r"\[IMAGE:.*?\]", "", msg.content).strip()
@@ -249,7 +259,6 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
     reply = re.sub(r'\btechnical details\b', 'personal things', reply, flags=re.IGNORECASE)
     
     # 3. Detect Photo Intent
-    # Check for brackets in AI reply OR specific keywords in user message
     img_desc = AIService.parse_image_description(reply)
     photo_keywords = [
         "photo", "pic", "selfie", "picture", "show me", "send", "nude", 
@@ -266,17 +275,12 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
 
     # 4. Generate Image if needed
     if img_desc or is_photo_request:
-        # Fallback description if the AI forgets to use brackets
         desc_to_use = img_desc if img_desc else f"{char.name} posing in a luxury penthouse"
-        
-        # Prepare DNA for the image service
         char_dna = {
             "identity": char.identity_dna, 
             "body": char.body_dna,
             "gender": char.gender
         }
-        
-        # Call the smart image service (this handles the naked/unrestricted logic)
         print(f"🖼️ Generating image for: {desc_to_use[:60]}...")
         final_image_url, final_local_path = ImageService.generate_smart_image(
             description=desc_to_use, 
@@ -287,40 +291,50 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
         )
         print(f"🖼️ Image result: url={final_image_url[:60] if final_image_url else None}, local={final_local_path}")
         
-    # ALWAYS clean up the reply — strip all bracket formats and AI filler phrases
-    # Remove [[double bracket]] descriptions
+    # ALWAYS clean up the reply
     reply = re.sub(r"\[\[.*?\]\]", "", reply, flags=re.DOTALL)
-    # Remove [ "single bracket with quotes" ] variants
     reply = re.sub(r'\[\s*["\'].*?["\']\s*\]', "", reply, flags=re.DOTALL)
-    # Remove any remaining [ ... ] brackets that contain more than a word (image descriptions)
     reply = re.sub(r'\[([^\]]{20,})\]', "", reply, flags=re.DOTALL)
-    # Remove "As per your request, here is a picture: ..." filler phrases
     reply = re.sub(r"as per your request[,\s]+here is (a |an )?(picture|photo|image|selfie)[:\s]*", "", reply, flags=re.IGNORECASE)
-    # Remove hallucinated "User: ..." continuations
     reply = re.sub(r"User:.*", "", reply, flags=re.DOTALL | re.IGNORECASE)
     reply = reply.strip()
 
-    # 5. Save user message
+    # Determine encryption target
+    user_pubkey = request.user_public_key or user.e2e_public_key
+
+    # 5. Save user message to database (Encrypted at Rest)
     if not is_initial_greeting:
-        user_msg = ChatMessage(user_id=user.id, character_id=char.id, sender="user", content=request.message)
+        if request.encrypted_user_content:
+            user_db_content = request.encrypted_user_content
+        elif user_pubkey:
+            user_db_content = encrypt_for_user(request.message, user_pubkey)
+        else:
+            user_db_content = request.message
+
+        user_msg = ChatMessage(user_id=user.id, character_id=char.id, sender="user", content=user_db_content)
         db.add(user_msg)
 
-    # 6. Save AI reply
+    # 6. Save AI reply to database (Encrypted at Rest)
     db_reply_content = reply
     if final_local_path:
         db_image_url = f"/{final_local_path.replace(chr(92), '/')}"
         db_reply_content += f"\n[IMAGE: {db_image_url}]"
 
+    if user_pubkey:
+        ai_db_content = encrypt_for_user(db_reply_content, user_pubkey)
+    else:
+        ai_db_content = db_reply_content
+
     new_log = ChatMessage(
         user_id=user.id, 
         character_id=char.id, 
         sender="assistant", 
-        content=db_reply_content
+        content=ai_db_content
     )
     db.add(new_log)
     db.commit()
 
-    # 6. Update User Memory in Background
+    # 7. Update User Memory in Background
     background_tasks.add_task(
         MemoryService.update_user_memory,
         user.id,
@@ -333,7 +347,8 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
         "image_url": f"/{final_local_path.replace(chr(92), '/')}" if final_local_path else final_image_url,
         "local_path": final_local_path,
         "character": char.name,
-        "time": datetime.utcnow().isoformat() + "Z"
+        "time": datetime.utcnow().isoformat() + "Z",
+        "is_encrypted": bool(user_pubkey)
     }
 
 @router.get("/history/{user_id_str}/{char_id}")
@@ -351,12 +366,24 @@ async def get_chat_history(user_id_str: str, char_id: str, db: Session = Depends
     formatted_chat = []
     for msg in messages:
         msg_time = msg.created_at.isoformat() + "Z" if msg.created_at else None
+        sender_role = "user" if msg.sender == "user" else "ai"
+        content = msg.content
         
+        # If content is encrypted payload, send it as raw encrypted text for client decryption
+        if is_encrypted_payload(content):
+            formatted_chat.append({
+                "sender": sender_role,
+                "type": "text",
+                "text": content,
+                "time": msg_time,
+                "is_encrypted": True
+            })
+            continue
+
+        # Handle legacy plaintext messages
         if msg.sender == "user":
-            content = msg.content
             audio_url = None
             if "[AUDIO:" in content:
-                import re
                 parts = content.split("[AUDIO:")
                 if len(parts) > 1:
                     audio_url = parts[1].split("]")[0].strip()
@@ -377,10 +404,8 @@ async def get_chat_history(user_id_str: str, char_id: str, db: Session = Depends
                     "time": msg_time
                 })
         else:
-            content = msg.content
             image_url = None
             if "[IMAGE:" in content:
-                import re
                 parts = content.split("[IMAGE: ")
                 content = parts[0].strip()
                 image_url = parts[1].replace("]", "").strip()

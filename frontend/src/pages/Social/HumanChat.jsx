@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Phone, Video, Image as ImageIcon, Send, X, Mic, MicOff, VideoOff, PhoneOff, Check, CheckCheck, Lock, LockOpen } from 'lucide-react';
+import { Phone, Video, Image as ImageIcon, Send, X, Mic, MicOff, VideoOff, PhoneOff, Check, CheckCheck, Lock, LockOpen, ShieldCheck, Copy } from 'lucide-react';
 import API, { getMediaUrl } from '../../api/api';
 import {
   getOrCreateKeyPair,
@@ -9,7 +9,9 @@ import {
   encryptMessage,
   decryptMessage,
   isEncrypted,
+  computeSafetyNumber,
 } from '../../utils/crypto';
+import { ringtone } from '../../utils/ringtone';
 
 export default function HumanChat() {
   const { targetId } = useParams();
@@ -18,10 +20,13 @@ export default function HumanChat() {
   const [input, setInput] = useState('');
   const [targetUser, setTargetUser] = useState(null);
   const [isDpOpen, setIsDpOpen] = useState(false);
+  const [showSafetyModal, setShowSafetyModal] = useState(false);
 
   // E2EE state
   const sharedKey = useRef(null);          // Uint8Array shared secret
   const [e2eeReady, setE2eeReady] = useState(false);  // true once key exchange done
+  const [peerPublicKey, setPeerPublicKey] = useState(null);
+  const [myPublicKey, setMyPublicKey] = useState(null);
 
   // WebSocket
   const ws = useRef(null);
@@ -37,6 +42,61 @@ export default function HumanChat() {
   const iceCandidateQueue = useRef([]);
   const [isMuted, setIsMuted] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(false);
+
+  // ── Handle Ringtone for Incoming Calls ─────────────────────────────────────
+  useEffect(() => {
+    if (callState === 'incoming') {
+      ringtone.start();
+    } else {
+      ringtone.stop();
+    }
+    return () => ringtone.stop();
+  }, [callState]);
+
+  // ── Auto-accept call if triggered from push notification ──────────────────
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('auto_accept') === 'true' && callState === 'incoming') {
+      acceptCall();
+    }
+  }, [callState]);
+
+  // ── Auto-start call if triggered from "Call Back" push notification ───────
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('start_call') === 'true' && ws.current && ws.current.readyState === WebSocket.OPEN && callState === 'idle') {
+      initiateCall(false);
+    }
+  }, [callState]);
+
+  // ── 35-Second Caller Ringing Timeout ──────────────────────────────────────
+  useEffect(() => {
+    let timer;
+    if (callState === 'ringing') {
+      timer = setTimeout(() => {
+        endCall(true); // Cancels call and records missed call
+      }, 35000);
+    }
+    return () => clearTimeout(timer);
+  }, [callState]);
+
+  // ── Service Worker broadcast listener for background calls ─────────────────
+  useEffect(() => {
+    const onSwMessage = (event) => {
+      if (event.data?.type === 'INCOMING_CALL' && event.data?.payload?.data?.caller_id === targetId) {
+        const isVideo = event.data.payload.data.video === 'True' || event.data.payload.data.video === 'true';
+        setHasVideo(isVideo);
+        hasVideoRef.current = isVideo;
+        setCallState('incoming');
+      } else if (event.data?.type === 'MISSED_CALL' && event.data?.payload?.data?.caller_id === targetId) {
+        setCallState('idle');
+      }
+    };
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', onSwMessage);
+      return () => navigator.serviceWorker.removeEventListener('message', onSwMessage);
+    }
+  }, [targetId]);
 
   // ── Decrypt a single message content ────────────────────────────────────────
   const tryDecrypt = useCallback((content) => {
@@ -60,6 +120,7 @@ export default function HumanChat() {
         // Ensure keypair exists locally
         getOrCreateKeyPair();
         const myPubKey = getMyPublicKey();
+        setMyPublicKey(myPubKey);
 
         // Upload our public key to the server (idempotent)
         await API.post('/api/social/public-key', { public_key: myPubKey });
@@ -69,10 +130,11 @@ export default function HumanChat() {
         const theirKey = res.data.public_key;
 
         if (theirKey) {
+          setPeerPublicKey(theirKey);
           sharedKey.current = deriveSharedKey(theirKey);
           setE2eeReady(true);
         } else {
-          // Peer hasn't registered a key yet — chat will work in plaintext
+          // Peer hasn't registered a key yet
           console.warn('[E2EE] Peer has no public key. Falling back to plaintext.');
           setE2eeReady(false);
         }
@@ -183,7 +245,6 @@ export default function HumanChat() {
     if (e2eeReady && messages.length > 0) {
       setMessages(prev => decryptAll(prev.map(m => ({
         ...m,
-        // Re-run decrypt in case history loaded before key was ready
         content: m.content,
       }))));
     }
@@ -226,7 +287,7 @@ export default function HumanChat() {
     setInput('');
   };
 
-  // ── Send view-once image (URL is stored as-is; no text content to encrypt) ──
+  // ── Send view-once image ───────────────────────────────────────────────────
   const sendViewOnce = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -319,6 +380,8 @@ export default function HumanChat() {
     if (track) { track.enabled = !track.enabled; setIsCameraOff(!track.enabled); }
   };
 
+  const safetyNumber = (myPublicKey && peerPublicKey) ? computeSafetyNumber(myPublicKey, peerPublicKey) : null;
+
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
     <div style={styles.container}>
@@ -348,7 +411,11 @@ export default function HumanChat() {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0, marginLeft: 10 }}>
           {/* E2EE badge */}
-          <div title={e2eeReady ? 'End-to-end encrypted' : 'Encryption not available'} style={styles.e2eeBadge(e2eeReady)}>
+          <div 
+            onClick={() => setShowSafetyModal(true)}
+            title={e2eeReady ? 'End-to-end encrypted (Click to verify)' : 'Encryption initializing...'} 
+            style={styles.e2eeBadge(e2eeReady)}
+          >
             {e2eeReady ? <Lock size={12} /> : <LockOpen size={12} />}
             <span style={{ fontSize: 10, fontWeight: 600 }}>{e2eeReady ? 'E2EE' : 'Plain'}</span>
           </div>
@@ -359,9 +426,9 @@ export default function HumanChat() {
 
       {/* E2EE notice banner */}
       {e2eeReady && (
-        <div style={styles.encryptedBanner}>
+        <div style={styles.encryptedBanner} onClick={() => setShowSafetyModal(true)} role="button">
           <Lock size={12} />
-          <span>Messages are end-to-end encrypted. Only you and {targetUser?.name || 'the other person'} can read them.</span>
+          <span>Messages and calls are end-to-end encrypted. Tap to verify safety numbers.</span>
         </div>
       )}
 
@@ -399,9 +466,52 @@ export default function HumanChat() {
       <div style={styles.chatArea}>
         {messages.map((m, i) => {
           const isMine = m.sender_id !== targetId;
+          const isMissedCall = m.message_type === 'missed_call';
+
           return (
-            <div key={i} style={{ ...styles.msgBubble, alignSelf: isMine ? 'flex-end' : 'flex-start', background: isMine ? '#005c4b' : '#202c33' }}>
-              {m.message_type === 'view_once' && m.content !== '[VIEWED]' ? (
+            <div
+              key={i}
+              style={{
+                ...styles.msgBubble,
+                alignSelf: isMine ? 'flex-end' : 'flex-start',
+                background: isMissedCall
+                  ? 'rgba(239, 68, 68, 0.12)'
+                  : isMine ? '#005c4b' : '#202c33',
+                border: isMissedCall ? '1px solid rgba(239, 68, 68, 0.3)' : 'none',
+                minWidth: isMissedCall ? 220 : 'auto',
+              }}
+            >
+              {isMissedCall ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 0' }}>
+                  <div style={{
+                    width: 34, height: 34, borderRadius: '50%',
+                    background: 'rgba(239, 68, 68, 0.2)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    color: '#ef4444'
+                  }}>
+                    <PhoneOff size={18} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <p style={{ margin: 0, fontWeight: 600, color: '#f87171', fontSize: 13 }}>
+                      {m.content || 'Missed Call'}
+                    </p>
+                    <span style={{ fontSize: 10, color: '#8696a0' }}>
+                      {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => initiateCall(false)}
+                    style={{
+                      background: 'rgba(34, 197, 94, 0.15)', border: '1px solid rgba(34, 197, 94, 0.3)',
+                      borderRadius: 16, padding: '5px 10px', color: '#4ade80',
+                      fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', gap: 4
+                    }}
+                  >
+                    <Phone size={12} /> Call Back
+                  </button>
+                </div>
+              ) : m.message_type === 'view_once' && m.content !== '[VIEWED]' ? (
                 isMine ? (
                   <p style={{ margin: 0, fontStyle: 'italic', color: '#8696a0' }}>📷 View Once Photo Sent</p>
                 ) : (
@@ -410,14 +520,16 @@ export default function HumanChat() {
               ) : (
                 <p style={{ margin: 0 }}>{m.content}</p>
               )}
-              <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', alignSelf: 'flex-end', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
-                {e2eeReady && m.message_type === 'text' && <Lock size={9} color="rgba(0,168,132,0.7)" />}
-                {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}
-                {isMine && (
-                  m.is_viewed ? <CheckCheck size={14} color="#53bdeb" /> :
-                  m.is_delivered !== false ? <CheckCheck size={14} color="#8696a0" /> : <Check size={14} color="#8696a0" />
-                )}
-              </span>
+              {!isMissedCall && (
+                <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', alignSelf: 'flex-end', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                  {e2eeReady && m.message_type === 'text' && <Lock size={9} color="rgba(0,168,132,0.7)" />}
+                  {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}
+                  {isMine && (
+                    m.is_viewed ? <CheckCheck size={14} color="#53bdeb" /> :
+                    m.is_delivered !== false ? <CheckCheck size={14} color="#8696a0" /> : <Check size={14} color="#8696a0" />
+                  )}
+                </span>
+              )}
             </div>
           );
         })}
@@ -445,6 +557,52 @@ export default function HumanChat() {
         <div onClick={() => setIsDpOpen(false)} style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.9)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <img src={getMediaUrl(targetUser.avatar_url)} alt="DP" style={{ maxWidth: '90%', maxHeight: '90%', objectFit: 'contain', borderRadius: 8 }} onClick={e => e.stopPropagation()} />
           <button onClick={() => setIsDpOpen(false)} style={{ position: 'absolute', top: 20, right: 20, background: 'none', border: 'none', color: '#fff', cursor: 'pointer' }}><X size={32} /></button>
+        </div>
+      )}
+
+      {/* ── Safety Number / E2EE Info Modal ── */}
+      {showSafetyModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 99999, backdropFilter: 'blur(4px)' }} onClick={() => setShowSafetyModal(false)}>
+          <div style={{ background: '#111b21', borderRadius: 20, padding: 28, maxWidth: 440, width: '90%', color: '#e9edef', border: '1px solid rgba(0,168,132,0.3)', position: 'relative' }} onClick={e => e.stopPropagation()}>
+            <button onClick={() => setShowSafetyModal(false)} style={{ position: 'absolute', top: 16, right: 16, background: 'none', border: 'none', color: '#8696a0', cursor: 'pointer' }}><X size={20} /></button>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+              <div style={{ width: 44, height: 44, borderRadius: '50%', background: 'rgba(0,168,132,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#00a884' }}>
+                <ShieldCheck size={26} />
+              </div>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>End-to-End Encryption</h3>
+                <p style={{ margin: 0, fontSize: 12, color: e2eeReady ? '#00a884' : '#8696a0' }}>
+                  {e2eeReady ? 'Direct Peer-to-Peer Encryption Active' : 'Key Exchange Pending'}
+                </p>
+              </div>
+            </div>
+
+            <p style={{ fontSize: 13, color: '#8696a0', lineHeight: '1.6', marginBottom: 20 }}>
+              Messages and calls with {targetUser?.name || 'this contact'} are secured with <strong>X25519 Diffie-Hellman</strong> and <strong>XSalsa20-Poly1305</strong>. No third party or server can read them.
+            </p>
+
+            {safetyNumber && (
+              <div style={{ background: '#202c33', borderRadius: 12, padding: '16px', marginBottom: 20, textAlign: 'center' }}>
+                <span style={{ fontSize: 11, color: '#8696a0', fontWeight: 600, textTransform: 'uppercase', display: 'block', marginBottom: 8 }}>
+                  Safety Verification Code
+                </span>
+                <p style={{ margin: 0, fontSize: 18, fontFamily: 'monospace', color: '#00a884', fontWeight: 700, letterSpacing: 2 }}>
+                  {safetyNumber}
+                </p>
+                <span style={{ fontSize: 11, color: '#666', marginTop: 8, display: 'block' }}>
+                  If this code matches on {targetUser?.name || 'your match'}&apos;s device, your connection is 100% authentic and secure.
+                </span>
+              </div>
+            )}
+
+            <button
+              onClick={() => setShowSafetyModal(false)}
+              style={{ width: '100%', padding: '12px', background: '#00a884', border: 'none', borderRadius: 10, color: '#fff', fontWeight: 700, cursor: 'pointer', fontSize: 14 }}
+            >
+              Verify & Close
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -483,13 +641,14 @@ const styles = {
   msgBubble: { padding: '8px 12px', borderRadius: 12, maxWidth: '70%', display: 'flex', flexDirection: 'column', boxShadow: '0 1px 2px rgba(0,0,0,0.3)' },
   inputArea: { display: 'flex', padding: 15, background: '#202c33', alignItems: 'center', gap: 10 },
   input: { flex: 1, background: '#2a3942', border: 'none', borderRadius: 20, padding: '12px 20px', color: '#e9edef', outline: 'none' },
-  encryptedBanner: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '6px 16px', background: 'rgba(0,168,132,0.12)', borderBottom: '1px solid rgba(0,168,132,0.2)', color: '#00a884', fontSize: 11, fontWeight: 500 },
+  encryptedBanner: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '6px 16px', background: 'rgba(0,168,132,0.12)', borderBottom: '1px solid rgba(0,168,132,0.2)', color: '#00a884', fontSize: 11, fontWeight: 500, cursor: 'pointer' },
   e2eeBadge: (active) => ({
     display: 'flex', alignItems: 'center', gap: 4,
-    padding: '3px 8px', borderRadius: 20,
+    padding: '4px 10px', borderRadius: 20,
     background: active ? 'rgba(0,168,132,0.15)' : 'rgba(255,255,255,0.07)',
     border: `1px solid ${active ? 'rgba(0,168,132,0.4)' : 'rgba(255,255,255,0.1)'}`,
     color: active ? '#00a884' : '#8696a0',
-    cursor: 'default',
+    cursor: 'pointer',
+    transition: 'background 0.2s',
   }),
 };

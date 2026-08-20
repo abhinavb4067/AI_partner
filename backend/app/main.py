@@ -37,7 +37,15 @@ except Exception as e:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Create tables that don't yet exist (safe — won't drop existing)
-    Base.metadata.create_all(bind=engine)
+    try:
+        from app.models.all_models import EmailOTP
+        EmailOTP.__table__.create(bind=engine, checkfirst=True)
+    except Exception as e:
+        print(f"Warning creating EmailOTP table: {e}")
+    try:
+        Base.metadata.create_all(bind=engine)
+    except Exception as e:
+        print(f"Base.metadata.create_all notice: {e}")
     _seed_admin()
     yield
 

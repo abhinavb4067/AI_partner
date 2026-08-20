@@ -6,10 +6,11 @@ pydantic-settings
 pydantic[email]
 python-multipart
 
-# Auth
+# Auth & Security
 python-jose[cryptography]
 passlib[bcrypt]
 google-auth
+pynacl
 
 # AI / Image
 httpx

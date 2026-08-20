@@ -34,6 +34,7 @@ class Settings(BaseSettings):
 
     # ── Email Delivery (Resend) ──────────────────────────────────────────────
     RESEND_API_KEY: str = ""
+    EMAILS_FROM_EMAIL: str = "noreply@ectama.com"
 
     # ── Google OAuth ─────────────────────────────────────────────────────────
     GOOGLE_CLIENT_ID: str = ""
