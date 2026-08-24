@@ -2,6 +2,7 @@ import json
 from datetime import datetime, timezone
 from typing import Dict, List, Set
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_
 
@@ -175,6 +176,75 @@ manager = ConnectionManager()
 active_call_sessions: Dict[str, dict] = {}
 
 
+def _lookup_user(db: Session, key: str) -> UserAccount:
+    if not key:
+        return None
+    return db.query(UserAccount).filter(
+        (UserAccount.id == key) | (UserAccount.user_id == key) | (UserAccount.email == key)
+    ).first()
+
+
+async def _finalize_missed_call(db: Session, session: dict, acting_user_id: str):
+    """Persist a missed/declined call as a chat message and notify both parties.
+    `acting_user_id` is whoever triggered the end (caller cancelling or callee declining/ending),
+    used to figure out which side still needs to be told what happened."""
+    s_caller_id = session["caller_id"]
+    s_callee_id = session["target_id"]
+    s_caller_name = session.get("caller_name", "User")
+    s_is_video = session.get("video", False)
+    s_call_type = "Video" if s_is_video else "Voice"
+
+    missed_msg = HumanMessage(
+        sender_id=s_caller_id,
+        receiver_id=s_callee_id,
+        content=f"Missed {s_call_type} call",
+        message_type="missed_call"
+    )
+    db.add(missed_msg)
+    db.commit()
+    db.refresh(missed_msg)
+
+    out_missed = {
+        "type": "new_message",
+        "message": {
+            "id": missed_msg.id,
+            "sender_id": s_caller_id,
+            "receiver_id": s_callee_id,
+            "content": missed_msg.content,
+            "message_type": "missed_call",
+            "created_at": missed_msg.created_at.isoformat() + "Z",
+            "is_viewed": False,
+            "is_delivered": True
+        }
+    }
+    # Both sides should see the missed-call bubble in their chat history
+    await manager.send_personal_message(json.dumps(out_missed), s_caller_id)
+    await manager.send_personal_message(json.dumps(out_missed), s_callee_id)
+
+    # Whoever didn't just act needs to be told: caller cancelled -> tell callee; callee declined/ended -> tell caller
+    notify_id = s_callee_id if acting_user_id == s_caller_id else s_caller_id
+    notify_user = _lookup_user(db, notify_id)
+
+    if notify_user and notify_user.fcm_token:
+        if notify_id == s_callee_id:
+            title, body = "📞 Missed Call", f"You missed a {s_call_type} call from {s_caller_name}"
+        else:
+            title, body = "📞 Call Declined", f"Your {s_call_type} call was declined"
+        send_push_notification(
+            fcm_token=notify_user.fcm_token,
+            title=title,
+            body=body,
+            data={"type": "missed_call", "caller_id": s_caller_id, "caller_name": s_caller_name, "video": str(s_is_video)}
+        )
+
+    # If the other side still has a live socket, close their ringing UI immediately
+    notify_keys = [notify_id, notify_user.id, notify_user.user_id, notify_user.email] if notify_user else [notify_id]
+    await manager.send_personal_message(
+        json.dumps({"type": "call_reject", "sender_id": acting_user_id, "target_id": notify_id}),
+        notify_keys
+    )
+
+
 async def get_user_from_token(token: str, db: Session) -> UserAccount:
     try:
         payload = decode_token(token)
@@ -268,49 +338,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
                         elif msg_type in ["call_reject", "call_end", "call_cancel"]:
                             session = active_call_sessions.pop(f"{user_id}_{actual_target_id}", None) or active_call_sessions.pop(f"{actual_target_id}_{user_id}", None)
                             if session and session.get("state") == "ringing":
-                                # Call was missed / unanswered
-                                s_caller_id = session["caller_id"]
-                                s_callee_id = session["target_id"]
-                                s_caller_name = session.get("caller_name", "User")
-                                s_is_video = session.get("video", False)
-                                s_call_type = "Video" if s_is_video else "Voice"
-
-                                # Save Missed Call in DB
-                                missed_msg = HumanMessage(
-                                    sender_id=s_caller_id,
-                                    receiver_id=s_callee_id,
-                                    content=f"Missed {s_call_type} call",
-                                    message_type="missed_call"
-                                )
-                                db.add(missed_msg)
-                                db.commit()
-                                db.refresh(missed_msg)
-
-                                # Broadcast message to both users
-                                out_missed = {
-                                    "type": "new_message",
-                                    "message": {
-                                        "id": missed_msg.id,
-                                        "sender_id": s_caller_id,
-                                        "receiver_id": s_callee_id,
-                                        "content": missed_msg.content,
-                                        "message_type": "missed_call",
-                                        "created_at": missed_msg.created_at.isoformat() + "Z",
-                                        "is_viewed": False,
-                                        "is_delivered": any(k in manager.active_connections for k in target_keys)
-                                    }
-                                }
-                                await manager.send_personal_message(json.dumps(out_missed), s_caller_id)
-                                await manager.send_personal_message(json.dumps(out_missed), target_keys)
-
-                                # Send Missed Call FCM Push Notification to Callee
-                                if target_user and target_user.fcm_token:
-                                    send_push_notification(
-                                        fcm_token=target_user.fcm_token,
-                                        title="📞 Missed Call",
-                                        body=f"You missed a {s_call_type} call from {s_caller_name}",
-                                        data={"type": "missed_call", "caller_id": s_caller_id, "caller_name": s_caller_name, "video": str(s_is_video)}
-                                    )
+                                await _finalize_missed_call(db, session, acting_user_id=user_id)
 
                         # Forward signaling payload to the peer
                         await manager.send_personal_message(json.dumps(payload), target_keys)
@@ -413,6 +441,37 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
             db_session.commit()
         db_session.close()
         db.close()
+
+
+class CallRejectBody(BaseModel):
+    caller_id: str
+
+
+@router.post("/call/reject")
+async def reject_call_rest(
+    body: CallRejectBody,
+    current_user: UserAccount = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """REST fallback for declining a call from the Decline action on a system push
+    notification, used when the callee has no live WebSocket open (app closed/backgrounded)."""
+    callee_id = current_user.id
+    caller_id = body.caller_id
+
+    session = active_call_sessions.pop(f"{caller_id}_{callee_id}", None) or active_call_sessions.pop(f"{callee_id}_{caller_id}", None)
+    if session and session.get("state") == "ringing":
+        await _finalize_missed_call(db, session, acting_user_id=callee_id)
+    else:
+        # No tracked session (e.g. server restarted since the call started) - still tell
+        # the caller live if they're connected so their ringing screen closes.
+        caller_user = _lookup_user(db, caller_id)
+        caller_keys = [caller_id, caller_user.id, caller_user.user_id, caller_user.email] if caller_user else [caller_id]
+        await manager.send_personal_message(
+            json.dumps({"type": "call_reject", "sender_id": callee_id, "target_id": caller_id}),
+            caller_keys
+        )
+
+    return {"status": "ok"}
 
 
 @router.get("/history/{target_id}")

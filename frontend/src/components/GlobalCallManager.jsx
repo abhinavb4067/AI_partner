@@ -3,7 +3,13 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { Phone, PhoneOff, Video, Sparkles } from 'lucide-react';
 import { ringtone } from '../utils/ringtone';
 import { setupMessageListener } from '../firebase';
+import { showSystemNotification } from '../utils/systemNotify';
 import API, { getMediaUrl } from '../api/api';
+
+const CALL_ACTIONS = [
+  { action: 'answer', title: '📞 Answer' },
+  { action: 'decline', title: '❌ Decline' },
+];
 
 export default function GlobalCallManager() {
   const [incomingCall, setIncomingCall] = useState(null);
@@ -11,6 +17,10 @@ export default function GlobalCallManager() {
   const ws = useRef(null);
   const navigate = useNavigate();
   const location = useLocation();
+  // Effects below only depend on [token, isAuthPage] and don't re-subscribe on route change,
+  // so they'd otherwise see a stale `location` from mount time. Keep a ref that's always current.
+  const pathRef = useRef(location.pathname);
+  useEffect(() => { pathRef.current = location.pathname; }, [location.pathname]);
 
   const token = localStorage.getItem('token');
   const isAuthPage = location.pathname.includes('/login') || location.pathname.includes('/register');
@@ -50,7 +60,7 @@ export default function GlobalCallManager() {
               const isVideo = Boolean(data.video);
 
               // If already on the chat screen with this caller, let HumanChat handle UI
-              const isCurrentChat = location.pathname.includes(callerId);
+              const isCurrentChat = pathRef.current.includes(callerId);
 
               // Fetch caller info
               let name = data.caller_name || 'Someone';
@@ -75,6 +85,18 @@ export default function GlobalCallManager() {
               });
 
               ringtone.start();
+              showSystemNotification(
+                `Incoming ${isVideo ? 'Video' : 'Voice'} Call`,
+                `${name} is calling you...`,
+                {
+                  tag: `incoming_call_${callerId}`,
+                  renotify: true,
+                  requireInteraction: true,
+                  vibrate: [500, 250, 500, 250, 500, 250, 500, 250, 500, 250, 1000],
+                  actions: CALL_ACTIONS,
+                  data: { type: 'call', caller_id: callerId, caller_name: name, video: String(isVideo) },
+                }
+              );
             } else if (data.type === 'call_end' || data.type === 'call_reject' || data.type === 'call_cancel' || data.type === 'missed_call') {
               ringtone.stop();
               setIncomingCall(null);
@@ -139,9 +161,38 @@ export default function GlobalCallManager() {
           isVideo,
         });
         ringtone.start();
+        showSystemNotification(
+          `Incoming ${isVideo ? 'Video' : 'Voice'} Call`,
+          `${name} is calling you...`,
+          {
+            tag: `incoming_call_${callerId}`,
+            renotify: true,
+            requireInteraction: true,
+            vibrate: [500, 250, 500, 250, 500, 250, 500, 250, 500, 250, 1000],
+            actions: CALL_ACTIONS,
+            data: { type: 'call', caller_id: callerId, caller_name: name, video: String(isVideo) },
+          }
+        );
       } else if (data.type === 'missed_call') {
         ringtone.stop();
         setIncomingCall(null);
+      } else if (data.type === 'chat') {
+        // Foreground chat message push. Only surface it as a system-tray notification when
+        // the user isn't already looking at that exact conversation.
+        const senderId = data.sender_id;
+        const isCurrentChat = senderId && pathRef.current.includes(senderId);
+        if (!isCurrentChat) {
+          showSystemNotification(
+            data.sender_name || payload.notification?.title || 'New message',
+            payload.notification?.body || data.body || 'You have a new message',
+            {
+              tag: `chat_${senderId}`,
+              renotify: true,
+              vibrate: [200, 100, 200],
+              data: { type: 'chat', sender_id: senderId },
+            }
+          );
+        }
       }
     });
 
@@ -179,6 +230,17 @@ export default function GlobalCallManager() {
       } else if (event.data?.type === 'MISSED_CALL') {
         ringtone.stop();
         setIncomingCall(null);
+      } else if (event.data?.type === 'CALL_DECLINE_FROM_NOTIFICATION') {
+        // User tapped "Decline" on the system notification while a tab was open - reject
+        // over the live socket (fast path); the SW also hits the REST fallback regardless,
+        // in case this is the only open tab and it closes before the send completes.
+        const callerId = event.data?.payload?.caller_id;
+        ringtone.stop();
+        if (callerId && ws.current && ws.current.readyState === WebSocket.OPEN) {
+          ws.current.send(JSON.stringify({ type: 'call_reject', target_id: callerId }));
+        }
+        setIncomingCall(null);
+        setCallerUser(null);
       }
     };
 

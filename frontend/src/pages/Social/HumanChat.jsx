@@ -42,6 +42,14 @@ export default function HumanChat() {
   const iceCandidateQueue = useRef([]);
   const [isMuted, setIsMuted] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(false);
+  // Bumped every time endCall() runs, so a getUserMedia() promise that's still pending
+  // when the call ends (e.g. permission prompt not yet answered) can tell, once it
+  // resolves, that it's for a call that's already gone and must not resurrect it.
+  const callSessionId = useRef(0);
+  // Prevents two concurrent startWebRTC() calls (e.g. a duplicate offer arriving while
+  // getUserMedia() is still pending) from firing a second permission prompt / clobbering
+  // each other's pc.current.
+  const webrtcSetupPromise = useRef(null);
 
   // ── Handle Ringtone for Incoming Calls ─────────────────────────────────────
   useEffect(() => {
@@ -329,41 +337,77 @@ export default function HumanChat() {
     ws.current.send(JSON.stringify({ type: 'call_reject', target_id: targetId }));
   };
   const startWebRTC = async (isCaller) => {
-    try {
-      setIsMuted(false);
-      setIsCameraOff(!hasVideoRef.current);
-      localStream.current = await navigator.mediaDevices.getUserMedia({
-        video: hasVideoRef.current ? { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24 } } : false,
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      });
-      if (localVideoRef.current) localVideoRef.current.srcObject = localStream.current;
-      pc.current = new RTCPeerConnection({
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-          { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-        ],
-      });
-      localStream.current.getTracks().forEach(track => pc.current.addTrack(track, localStream.current));
-      pc.current.ontrack = (event) => {
-        if (remoteVideoRef.current) remoteVideoRef.current.srcObject = event.streams[0];
-        if (event.track.kind === 'video') { hasVideoRef.current = true; setHasVideo(true); }
-      };
-      pc.current.onicecandidate = (event) => {
-        if (event.candidate) ws.current.send(JSON.stringify({ type: 'ice_candidate', target_id: targetId, candidate: event.candidate }));
-      };
-      if (isCaller) {
-        const offer = await pc.current.createOffer();
-        await pc.current.setLocalDescription(offer);
-        ws.current.send(JSON.stringify({ type: 'offer', target_id: targetId, sdp: offer }));
+    // If a setup is already in flight (e.g. this got triggered twice), don't kick off a
+    // second getUserMedia() request - wait for the same one instead.
+    if (webrtcSetupPromise.current) return webrtcSetupPromise.current;
+
+    const mySession = callSessionId.current;
+    const setupPromise = (async () => {
+      try {
+        setIsMuted(false);
+        setIsCameraOff(!hasVideoRef.current);
+        // This can take anywhere from milliseconds to many seconds while the browser
+        // shows its permission prompt. That's expected and NOT a failure - we simply
+        // wait for the user's actual answer (granted/denied) rather than timing out.
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: hasVideoRef.current ? { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24 } } : false,
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        });
+
+        // The call may have already been ended/cancelled by either side while we were
+        // waiting on the permission prompt. Don't resurrect a dead call - release the
+        // just-granted tracks and stop, instead of building a zombie connection.
+        if (callSessionId.current !== mySession) {
+          stream.getTracks().forEach(t => t.stop());
+          return;
+        }
+
+        localStream.current = stream;
+        if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+        pc.current = new RTCPeerConnection({
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+            { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+          ],
+        });
+        stream.getTracks().forEach(track => pc.current.addTrack(track, stream));
+        pc.current.ontrack = (event) => {
+          if (remoteVideoRef.current) remoteVideoRef.current.srcObject = event.streams[0];
+          if (event.track.kind === 'video') { hasVideoRef.current = true; setHasVideo(true); }
+        };
+        pc.current.onicecandidate = (event) => {
+          if (event.candidate) ws.current.send(JSON.stringify({ type: 'ice_candidate', target_id: targetId, candidate: event.candidate }));
+        };
+        if (isCaller) {
+          const offer = await pc.current.createOffer();
+          // Re-check after another async step - the call could have ended while we
+          // were creating the offer too.
+          if (callSessionId.current !== mySession) return;
+          await pc.current.setLocalDescription(offer);
+          ws.current.send(JSON.stringify({ type: 'offer', target_id: targetId, sdp: offer }));
+        }
+      } catch (e) {
+        console.error('WebRTC Error', e);
+        // Only react if this attempt is still the live one - otherwise the call already
+        // ended for another reason and this is just a stale/late permission response.
+        if (callSessionId.current === mySession) {
+          const isDenied = e?.name === 'NotAllowedError' || e?.name === 'PermissionDeniedError';
+          alert(isDenied ? 'Camera/microphone permission was denied.' : 'Failed to access camera/mic');
+          endCall(true);
+        }
       }
-    } catch (e) {
-      console.error('WebRTC Error', e);
-      alert('Failed to access camera/mic');
-      endCall(true);
+    })();
+
+    webrtcSetupPromise.current = setupPromise;
+    try {
+      await setupPromise;
+    } finally {
+      if (webrtcSetupPromise.current === setupPromise) webrtcSetupPromise.current = null;
     }
   };
   const endCall = (sendSignal = false) => {
+    callSessionId.current += 1; // invalidate any startWebRTC() attempt still waiting on getUserMedia()
     if (sendSignal && ws.current?.readyState === WebSocket.OPEN)
       ws.current.send(JSON.stringify({ type: 'call_end', target_id: targetId }));
     setCallState('idle');

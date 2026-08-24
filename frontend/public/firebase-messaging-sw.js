@@ -12,6 +12,39 @@ firebase.initializeApp({
 
 const messaging = firebase.messaging();
 
+// Mirrors frontend/src/utils/tokenStore.js - reads the auth token the main thread mirrors
+// into IndexedDB, so the service worker can make authenticated REST calls (e.g. declining a
+// call from the notification action) even when no app tab is open.
+const AUTH_DB_NAME = 'app_auth_store';
+const AUTH_STORE_NAME = 'kv';
+const AUTH_TOKEN_KEY = 'authToken';
+
+function idbGetToken() {
+  return new Promise((resolve) => {
+    try {
+      const req = indexedDB.open(AUTH_DB_NAME, 1);
+      req.onupgradeneeded = () => {
+        if (!req.result.objectStoreNames.contains(AUTH_STORE_NAME)) {
+          req.result.createObjectStore(AUTH_STORE_NAME);
+        }
+      };
+      req.onsuccess = () => {
+        try {
+          const tx = req.result.transaction(AUTH_STORE_NAME, 'readonly');
+          const getReq = tx.objectStore(AUTH_STORE_NAME).get(AUTH_TOKEN_KEY);
+          getReq.onsuccess = () => resolve(getReq.result || null);
+          getReq.onerror = () => resolve(null);
+        } catch (e) {
+          resolve(null);
+        }
+      };
+      req.onerror = () => resolve(null);
+    } catch (e) {
+      resolve(null);
+    }
+  });
+}
+
 messaging.onBackgroundMessage(function(payload) {
   console.log('[firebase-messaging-sw.js] Received background message ', payload);
   
@@ -84,8 +117,31 @@ self.addEventListener('notificationclick', function(event) {
   const data = event.notification.data || {};
   const action = event.action;
 
-  if (action === 'decline') {
-    // User declined call from notification
+  if (action === 'decline' && data.type === 'call') {
+    // Reject the call without opening/focusing the app.
+    event.waitUntil(
+      (async () => {
+        // Fast path: tell any open tab to reject over its live WebSocket.
+        const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+        clientList.forEach(function(client) {
+          client.postMessage({ type: 'CALL_DECLINE_FROM_NOTIFICATION', payload: data });
+        });
+
+        // Always also hit the REST fallback so decline still works with the app fully closed.
+        const token = await idbGetToken();
+        if (token && data.caller_id) {
+          try {
+            await fetch(self.location.origin + '/api/ws/chat/call/reject', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+              body: JSON.stringify({ caller_id: data.caller_id })
+            });
+          } catch (e) {
+            console.warn('[SW] Call decline REST fallback failed', e);
+          }
+        }
+      })()
+    );
     return;
   }
 

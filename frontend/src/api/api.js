@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { idbSetToken, idbClearToken } from '../utils/tokenStore';
 
 const BASE_URL = import.meta.env.VITE_API_URL || '';
 
@@ -11,9 +12,18 @@ export const getMediaUrl = (url) => {
 // ── User API instance ──────────────────────────────────────────────────────
 const API = axios.create({ baseURL: BASE_URL });
 
+let lastSyncedToken = null;
 API.interceptors.request.use((config) => {
   const token = localStorage.getItem('token');
-  if (token) config.headers.Authorization = `Bearer ${token}`;
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+    // Keep the service worker's copy of the token fresh so it can act on push-notification
+    // actions (e.g. declining a call) even when no app tab is open. Cheap to call repeatedly.
+    if (token !== lastSyncedToken) {
+      lastSyncedToken = token;
+      idbSetToken(token);
+    }
+  }
   return config;
 });
 
@@ -42,6 +52,7 @@ API.interceptors.response.use(
         const isSessionExpired = detail.toLowerCase().includes('session') || detail.toLowerCase().includes('expired');
         localStorage.removeItem('token');
         localStorage.removeItem('user');
+        idbClearToken();
         broadcastAuthEvent('SESSION_TERMINATED', { reason: 'session_expired' });
         window.location.href = isSessionExpired ? '/login?session_expired=true' : '/login';
       }
