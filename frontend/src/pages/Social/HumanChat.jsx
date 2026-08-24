@@ -206,37 +206,49 @@ export default function HumanChat() {
               : m
           )
         );
-      } else if (data.type === 'call_request') {
-        setHasVideo(data.video);
-        hasVideoRef.current = data.video;
-        setCallState('incoming');
-      } else if (data.type === 'call_reject' || data.type === 'call_end') {
-        endCall(false);
-      } else if (data.type === 'call_accept') {
-        setCallState('active');
-        setTimeout(() => startWebRTC(true), 100);
-      } else if (data.type === 'offer') {
-        setCallState('active');
-        setTimeout(async () => {
-          if (!pc.current) await startWebRTC(false);
+      } else if (['call_request', 'call_accept', 'call_reject', 'call_end', 'offer', 'answer', 'ice_candidate'].includes(data.type)) {
+        // This socket receives every signaling message addressed to this user, regardless
+        // of which chat is currently open - not just ones from `targetId`. Without this
+        // guard, a call from someone else (while chatting with a third person) would get
+        // wrongly treated as an incoming call from whoever this chat page happens to be
+        // open with. GlobalCallManager (mounted app-wide) is the one responsible for calls
+        // that aren't from the currently open chat partner.
+        if (data.sender_id !== targetId) {
+          return;
+        }
+
+        if (data.type === 'call_request') {
+          setHasVideo(data.video);
+          hasVideoRef.current = data.video;
+          setCallState('incoming');
+        } else if (data.type === 'call_reject' || data.type === 'call_end') {
+          endCall(false);
+        } else if (data.type === 'call_accept') {
+          setCallState('active');
+          setTimeout(() => startWebRTC(true), 100);
+        } else if (data.type === 'offer') {
+          setCallState('active');
+          setTimeout(async () => {
+            if (!pc.current) await startWebRTC(false);
+            await pc.current.setRemoteDescription(new RTCSessionDescription(data.sdp));
+            while (iceCandidateQueue.current.length > 0) {
+              await pc.current.addIceCandidate(new RTCIceCandidate(iceCandidateQueue.current.shift()));
+            }
+            const answer = await pc.current.createAnswer();
+            await pc.current.setLocalDescription(answer);
+            ws.current.send(JSON.stringify({ type: 'answer', target_id: targetId, sdp: answer }));
+          }, 100);
+        } else if (data.type === 'answer') {
           await pc.current.setRemoteDescription(new RTCSessionDescription(data.sdp));
           while (iceCandidateQueue.current.length > 0) {
             await pc.current.addIceCandidate(new RTCIceCandidate(iceCandidateQueue.current.shift()));
           }
-          const answer = await pc.current.createAnswer();
-          await pc.current.setLocalDescription(answer);
-          ws.current.send(JSON.stringify({ type: 'answer', target_id: targetId, sdp: answer }));
-        }, 100);
-      } else if (data.type === 'answer') {
-        await pc.current.setRemoteDescription(new RTCSessionDescription(data.sdp));
-        while (iceCandidateQueue.current.length > 0) {
-          await pc.current.addIceCandidate(new RTCIceCandidate(iceCandidateQueue.current.shift()));
-        }
-      } else if (data.type === 'ice_candidate') {
-        if (pc.current?.remoteDescription?.type) {
-          await pc.current.addIceCandidate(new RTCIceCandidate(data.candidate));
-        } else {
-          iceCandidateQueue.current.push(data.candidate);
+        } else if (data.type === 'ice_candidate') {
+          if (pc.current?.remoteDescription?.type) {
+            await pc.current.addIceCandidate(new RTCIceCandidate(data.candidate));
+          } else {
+            iceCandidateQueue.current.push(data.candidate);
+          }
         }
       }
     };

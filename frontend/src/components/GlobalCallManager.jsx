@@ -61,42 +61,46 @@ export default function GlobalCallManager() {
 
               // If already on the chat screen with this caller, let HumanChat handle UI
               const isCurrentChat = pathRef.current.includes(callerId);
+              const fallbackName = data.caller_name || 'Someone';
 
-              // Fetch caller info
-              let name = data.caller_name || 'Someone';
-              let avatar = null;
-              try {
-                const res = await API.get(`/api/social/user/${callerId}`);
-                if (res.data) {
-                  name = res.data.name || res.data.username || name;
-                  avatar = res.data.avatar_url;
-                  setCallerUser(res.data);
-                }
-              } catch (e) {
-                console.warn('Could not fetch caller details', e);
-              }
-
+              // Ring immediately with whatever we already have - the caller-details fetch
+              // below is a network round trip, and callers must not wait on it before the
+              // incoming-call screen appears (that window was previously blank/wrong).
               setIncomingCall({
                 callerId,
-                callerName: name,
-                callerAvatar: avatar,
+                callerName: fallbackName,
+                callerAvatar: null,
                 isVideo,
                 isCurrentChat,
               });
-
               ringtone.start();
               showSystemNotification(
                 `Incoming ${isVideo ? 'Video' : 'Voice'} Call`,
-                `${name} is calling you...`,
+                `${fallbackName} is calling you...`,
                 {
                   tag: `incoming_call_${callerId}`,
                   renotify: true,
                   requireInteraction: true,
                   vibrate: [500, 250, 500, 250, 500, 250, 500, 250, 500, 250, 1000],
                   actions: CALL_ACTIONS,
-                  data: { type: 'call', caller_id: callerId, caller_name: name, video: String(isVideo) },
+                  data: { type: 'call', caller_id: callerId, caller_name: fallbackName, video: String(isVideo) },
                 }
               );
+
+              // Enrich with the real name/avatar once fetched, but only if this is still
+              // the same call (it may have already been answered/declined/cancelled).
+              try {
+                const res = await API.get(`/api/social/user/${callerId}`);
+                if (res.data) {
+                  setCallerUser(res.data);
+                  const resolvedName = res.data.name || res.data.username || fallbackName;
+                  setIncomingCall(prev => (prev && prev.callerId === callerId)
+                    ? { ...prev, callerName: resolvedName, callerAvatar: res.data.avatar_url }
+                    : prev);
+                }
+              } catch (e) {
+                console.warn('Could not fetch caller details', e);
+              }
             } else if (data.type === 'call_end' || data.type === 'call_reject' || data.type === 'call_cancel' || data.type === 'missed_call') {
               ringtone.stop();
               setIncomingCall(null);
@@ -142,37 +146,38 @@ export default function GlobalCallManager() {
       if (data.type === 'call') {
         const callerId = data.caller_id;
         const isVideo = data.video === 'True' || data.video === 'true';
-
-        let name = data.caller_name || 'Someone';
-        let avatar = null;
-        try {
-          const res = await API.get(`/api/social/user/${callerId}`);
-          if (res.data) {
-            name = res.data.name || res.data.username || name;
-            avatar = res.data.avatar_url;
-            setCallerUser(res.data);
-          }
-        } catch (e) {}
+        const fallbackName = data.caller_name || 'Someone';
 
         setIncomingCall({
           callerId,
-          callerName: name,
-          callerAvatar: avatar,
+          callerName: fallbackName,
+          callerAvatar: null,
           isVideo,
         });
         ringtone.start();
         showSystemNotification(
           `Incoming ${isVideo ? 'Video' : 'Voice'} Call`,
-          `${name} is calling you...`,
+          `${fallbackName} is calling you...`,
           {
             tag: `incoming_call_${callerId}`,
             renotify: true,
             requireInteraction: true,
             vibrate: [500, 250, 500, 250, 500, 250, 500, 250, 500, 250, 1000],
             actions: CALL_ACTIONS,
-            data: { type: 'call', caller_id: callerId, caller_name: name, video: String(isVideo) },
+            data: { type: 'call', caller_id: callerId, caller_name: fallbackName, video: String(isVideo) },
           }
         );
+
+        try {
+          const res = await API.get(`/api/social/user/${callerId}`);
+          if (res.data) {
+            setCallerUser(res.data);
+            const resolvedName = res.data.name || res.data.username || fallbackName;
+            setIncomingCall(prev => (prev && prev.callerId === callerId)
+              ? { ...prev, callerName: resolvedName, callerAvatar: res.data.avatar_url }
+              : prev);
+          }
+        } catch (e) {}
       } else if (data.type === 'missed_call') {
         ringtone.stop();
         setIncomingCall(null);
@@ -208,25 +213,26 @@ export default function GlobalCallManager() {
         const data = event.data?.payload?.data || {};
         const callerId = data.caller_id;
         const isVideo = data.video === 'True' || data.video === 'true';
-
-        let name = data.caller_name || 'Someone';
-        let avatar = null;
-        try {
-          const res = await API.get(`/api/social/user/${callerId}`);
-          if (res.data) {
-            name = res.data.name || res.data.username || name;
-            avatar = res.data.avatar_url;
-            setCallerUser(res.data);
-          }
-        } catch (e) {}
+        const fallbackName = data.caller_name || 'Someone';
 
         setIncomingCall({
           callerId,
-          callerName: name,
-          callerAvatar: avatar,
+          callerName: fallbackName,
+          callerAvatar: null,
           isVideo,
         });
         ringtone.start();
+
+        try {
+          const res = await API.get(`/api/social/user/${callerId}`);
+          if (res.data) {
+            setCallerUser(res.data);
+            const resolvedName = res.data.name || res.data.username || fallbackName;
+            setIncomingCall(prev => (prev && prev.callerId === callerId)
+              ? { ...prev, callerName: resolvedName, callerAvatar: res.data.avatar_url }
+              : prev);
+          }
+        } catch (e) {}
       } else if (event.data?.type === 'MISSED_CALL') {
         ringtone.stop();
         setIncomingCall(null);
