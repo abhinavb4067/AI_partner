@@ -187,6 +187,15 @@ export default function HumanChat() {
       const data = JSON.parse(event.data);
 
       if (data.type === 'new_message') {
+        // This socket receives every message addressed to this user (including missed-call
+        // log entries), not just ones belonging to the conversation currently open - without
+        // this check, a message/call-log from a different chat leaks into whichever chat
+        // page happens to be open right now.
+        const belongsToThisChat = data.message.sender_id === targetId || data.message.receiver_id === targetId;
+        if (!belongsToThisChat) {
+          return;
+        }
+
         const msg = {
           ...data.message,
           content: data.message.message_type !== 'view_once'
