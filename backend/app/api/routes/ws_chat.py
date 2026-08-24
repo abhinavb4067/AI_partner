@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 from typing import Dict, List, Set
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -243,7 +244,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
                                 "caller_name": user.name or "User",
                                 "video": is_video,
                                 "state": "ringing",
-                                "started_at": datetime.utcnow()
+                                "started_at": datetime.now(timezone.utc)
                             }
                             print(f"📞 [Call Request] From {user.name} ({user_id}) to {target_user.name if target_user else target_id} (Has FCM: {bool(target_user and target_user.fcm_token)})")
                             # Send live ringing push notification
@@ -408,7 +409,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
         db_session = SessionLocal()
         u = db_session.query(UserAccount).filter(UserAccount.id == user_id).first()
         if u:
-            from datetime import datetime, timezone
             u.last_seen = datetime.now(timezone.utc)
             db_session.commit()
         db_session.close()
