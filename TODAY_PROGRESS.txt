@@ -1,0 +1,64 @@
+AI Girlfriend App — Work Log
+Date: 2026-09-11
+
+=== WHAT WAS DONE TODAY ===
+Reviewed the new Flutter mobile app port at mobile_app/ (currently untracked in git,
+never committed). It mirrors the web app: auth, AI chat, human-to-human chat + WebRTC
+calls, pricing/payment webview, social/discover/matching, E2E crypto (X25519/libsodium,
+ported from the web app's tweetnacl utils/crypto.js).
+
+Files reviewed (code-review pass only — no Flutter SDK installed on this machine, so
+`flutter analyze` / a real build was NOT run):
+  - mobile_app/lib/core/api_client.dart      -> OK, no issues
+  - mobile_app/lib/core/session.dart         -> OK, no issues
+  - mobile_app/lib/core/crypto_service.dart  -> OK, no issues
+  - mobile_app/lib/core/e2e_crypto.dart      -> OK, no issues
+  - mobile_app/lib/core/ws_service.dart      -> OK, no issues
+  - mobile_app/lib/services/chat_service.dart   -> OK
+  - mobile_app/lib/services/call_manager.dart   -> OK (good session-guarding on async WebRTC callbacks)
+  - mobile_app/lib/services/payment_service.dart -> only has getPlans(), no checkout call — needs confirming (see below)
+  - mobile_app/lib/screens/chat/chat_screen.dart -> BUG FOUND (see below)
+
+=== PROGRESS STATUS ===
+- mobile_app/ is functionally complete-looking (pubspec.yaml/.lock present, lib/ fully
+  built out, test/ folder exists) but has NEVER been committed to git. It's still fully
+  untracked.
+- .gitignore inside mobile_app/ is already correct (excludes build/, android/, ios/,
+  macos/, windows/, linux/, web/, .dart_tool/, etc.) — running `git add mobile_app`
+  would stage only ~47 real source/config files, not the 2.2GB build/ folder.
+
+=== BUG FOUND (NOT YET FIXED) ===
+File: mobile_app/lib/screens/chat/chat_screen.dart, function _loadHistory()
+Problem: `_error` is set when the history fetch fails, but is never cleared back to
+null on a subsequent successful/retried load. There is also no retry button anywhere
+in the UI. Net effect: if the very first history load fails (e.g. flaky network on
+cold start), the chat screen gets stuck showing the error message permanently with no
+way to recover except leaving and re-entering the screen. This is the closest match
+in the code to a "chat screen goes blank / stuck" symptom.
+Fix needed:
+  1. Reset `_error = null` at the top of `_loadHistory()` before the try block.
+  2. Add a retry button/action in the error-state UI (around line 228-229) that calls
+     `_loadHistory()` again.
+
+=== REMAINING / NEXT STEPS ===
+1. Fix the chat_screen.dart bug above.
+2. Confirm payment_service.dart is intentionally thin — check pricing_screen.dart and
+   payment_webview_screen.dart to verify the payment flow goes through the in-app
+   WebView to the web app's checkout (per env.dart's comment about WEB_APP_URL) rather
+   than needing a native subscribe/checkout API call. Was about to check this when work
+   paused today.
+3. Commit mobile_app/ to git once reviewed (git add mobile_app -> ~47 files, build/
+   and platform dirs correctly ignored).
+4. Install Flutter SDK on this machine (or verify elsewhere) and run `flutter pub get`
+   + `flutter analyze` to catch compile errors — never actually verified this builds.
+5. Still not reviewed: auth screens (login/register/forgot/reset), call_screen.dart,
+   social/discover/matches/human_chat screens, profile_screen.dart, push_service.dart,
+   voice_service.dart, google_auth_service.dart, router.dart, main.dart, theme.dart,
+   widgets/ (gradient_avatar, incoming_call_overlay).
+
+=== SEPARATE NOTE FROM TODAY ===
+Earlier in the session there was a question about "the chat session goes blank" —
+this turned out to be about the Claude Code chat panel in the VSCode extension going
+blank (likely context summarization or a session/tab reset), NOT an app bug. Nothing
+to fix in the codebase for that; if it recurs, check for a session/history picker in
+the extension to reopen the prior transcript.
