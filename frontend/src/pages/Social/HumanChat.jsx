@@ -451,9 +451,51 @@ export default function HumanChat() {
     const track = localStream.current?.getAudioTracks()[0];
     if (track) { track.enabled = !track.enabled; setIsMuted(!track.enabled); }
   };
+  // Also handles switching a voice call into a video call mid-call: if there's
+  // no video track yet (call started as audio-only), grab the camera, add the
+  // track to the live peer connection, and renegotiate so the other side
+  // starts receiving it - instead of just toggling a track that never existed.
+  const [isUpgradingVideo, setIsUpgradingVideo] = useState(false);
   const toggleVideo = async () => {
-    const track = localStream.current?.getVideoTracks()[0];
-    if (track) { track.enabled = !track.enabled; setIsCameraOff(!track.enabled); }
+    const existingTrack = localStream.current?.getVideoTracks()[0];
+    if (existingTrack) {
+      existingTrack.enabled = !existingTrack.enabled;
+      setIsCameraOff(!existingTrack.enabled);
+      return;
+    }
+
+    if (!pc.current || isUpgradingVideo) return;
+    setIsUpgradingVideo(true);
+    try {
+      const videoStream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24 } },
+      });
+      const videoTrack = videoStream.getVideoTracks()[0];
+
+      pc.current.addTrack(videoTrack, localStream.current || videoStream);
+      if (localStream.current) {
+        localStream.current.addTrack(videoTrack);
+      } else {
+        localStream.current = videoStream;
+      }
+      if (localVideoRef.current) localVideoRef.current.srcObject = localStream.current;
+
+      hasVideoRef.current = true;
+      setHasVideo(true);
+      setIsCameraOff(false);
+
+      // Renegotiate: a fresh offer/answer exchange is required any time tracks
+      // are added after the initial connection was established.
+      const offer = await pc.current.createOffer();
+      await pc.current.setLocalDescription(offer);
+      ws.current?.send(JSON.stringify({ type: 'offer', target_id: targetId, sdp: offer }));
+    } catch (e) {
+      console.error('Switch to video failed', e);
+      const isDenied = e?.name === 'NotAllowedError' || e?.name === 'PermissionDeniedError';
+      alert(isDenied ? 'Camera permission was denied.' : 'Failed to switch to video.');
+    } finally {
+      setIsUpgradingVideo(false);
+    }
   };
 
   const safetyNumber = (myPublicKey && peerPublicKey) ? computeSafetyNumber(myPublicKey, peerPublicKey) : null;
@@ -533,7 +575,14 @@ export default function HumanChat() {
           {callState === 'active' && (
             <div style={{ position: 'absolute', bottom: 40, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 20, background: 'rgba(0,0,0,0.5)', padding: '10px 20px', borderRadius: 30 }}>
               <button onClick={toggleMute} style={{ ...styles.iconBtn, color: isMuted ? '#e91e8c' : '#fff' }}>{isMuted ? <MicOff size={24} /> : <Mic size={24} />}</button>
-              <button onClick={toggleVideo} style={{ ...styles.iconBtn, color: isCameraOff ? '#e91e8c' : '#fff' }}>{isCameraOff ? <VideoOff size={24} /> : <Video size={24} />}</button>
+              <button
+                onClick={toggleVideo}
+                disabled={isUpgradingVideo}
+                title={hasVideoRef.current ? (isCameraOff ? 'Turn camera on' : 'Turn camera off') : 'Switch to video call'}
+                style={{ ...styles.iconBtn, color: isCameraOff ? '#e91e8c' : '#fff', opacity: isUpgradingVideo ? 0.5 : 1 }}
+              >
+                {isCameraOff ? <VideoOff size={24} /> : <Video size={24} />}
+              </button>
               <button onClick={() => endCall(true)} style={{ ...styles.iconBtn, background: '#e91e8c', borderRadius: '50%', padding: 10, color: '#fff' }}><PhoneOff size={24} /></button>
             </div>
           )}
