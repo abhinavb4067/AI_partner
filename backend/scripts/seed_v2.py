@@ -66,11 +66,19 @@ raw_conn.close()
 engine.dispose()
 
 # ── Update plan data ───────────────────────────────────────────────────────────
+# Credits recalibrated to real per-unit API cost (text=1cr/~₹0.0006,
+# photo=8cr, voice=15cr — see backend/docs/ or chat history for the full
+# unit-economics breakdown). Elite is marketed as "Unlimited" in the
+# frontend (Pricing.jsx/Profile.jsx/PaymentModal.jsx key off plan_name ==
+# "elite", not is_unlimited) but is_unlimited stays False with a real
+# 6000-credit cap — a true is_unlimited=True bypasses ALL server-side credit
+# gating (see chat.py), which is what made "unlimited" a genuine cost-abuse
+# risk before. Never set elite's is_unlimited back to True.
 PLANS = [
-    ("free",    "Free",    50,     0,   0,    False, False, False, False),
-    ("starter", "Starter", 500,  199, 499,    False, False,  True, False),
-    ("pro",     "Pro",    2000,  499, 999,    False,  True,  True,  True),
-    ("elite",   "Elite",99999,  999,1999,     True,   True,  True,  True),
+    ("free",    "Free",      30,   0,    0,    False, False, False, False),
+    ("starter", "Starter",  400, 149, 1499,    False, False,  True, False),
+    ("pro",     "Pro",     1500, 399, 3999,    False,  True,  True,  True),
+    ("elite",   "Elite",   6000, 899, 8999,    False,  True,  True,  True),
 ]
 
 conn2 = engine.connect()

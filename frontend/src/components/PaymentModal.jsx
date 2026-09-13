@@ -213,7 +213,7 @@ export default function PaymentModal({ plan, onClose, onSuccess }) {
             {/* Features */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {[
-                plan.is_unlimited ? '∞ Unlimited Credits' : `${plan.monthly_credits?.toLocaleString()} Credits / month`,
+                plan.plan_name === 'elite' ? '∞ Unlimited Credits' : `${plan.monthly_credits?.toLocaleString()} Credits / month`,
                 plan.can_use_voice   && '🎤 Voice Messages',
                 plan.can_use_images  && '📸 Image Generation',
                 plan.can_access_premium_chars && '👑 Premium Characters',

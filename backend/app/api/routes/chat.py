@@ -187,7 +187,10 @@ async def chat(
         "photo", "pic", "selfie", "picture", "show me", "send", "nude", 
         "naked", "boobs", "tits", "pussy", "vagina", "ass", "body", "strip", "take off"
     ])
-    credit_cost = 5 if is_photo_request else 1
+    # Recalibrated to actual API cost ratios: an SFW/NSFW photo costs roughly
+    # 10-100x what a text reply costs (fal.ai flux-pro/fast-sdxl vs OpenRouter
+    # Llama), not the old 5x — that mismatch was subsidizing photo spam.
+    credit_cost = 8 if is_photo_request else 1
     
     if not user.is_unlimited:
         if user.credits_remaining < credit_cost:

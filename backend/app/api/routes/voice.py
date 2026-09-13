@@ -15,8 +15,9 @@ from app.core.limiter import limiter
 
 router = APIRouter()
 
-# Credit cost per TTS request
-VOICE_CREDIT_COST = 2
+# Credit cost per TTS request. Recalibrated to real ElevenLabs cost — a voice
+# reply costs roughly 40x a text reply, not the old 2x.
+VOICE_CREDIT_COST = 15
 
 
 class TTSRequest(BaseModel):

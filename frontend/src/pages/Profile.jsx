@@ -248,8 +248,12 @@ function SubscriptionTab({ profile, card, navigate }) {
   const PLAN_COLORS = { free: '#888', starter: '#2196f3', pro: '#9c27b0', elite: '#ffd700' };
   const plan = profile?.plan || {};
   const color = PLAN_COLORS[plan.name] || '#888';
+  // Elite is marketed as "Unlimited" but is a high hard cap now, not a true
+  // bypass — display by plan name, not the is_unlimited flag (that flag
+  // staying false is what makes the server-side credit cap actually apply).
+  const isMarketedUnlimited = plan.name === 'elite';
   const used = plan.monthly_credits - (profile?.credits_remaining || 0);
-  const pct = plan.is_unlimited || profile?.is_unlimited ? 100 : Math.max(0, ((profile?.credits_remaining || 0) / (plan.monthly_credits || 1)) * 100);
+  const pct = isMarketedUnlimited ? 100 : Math.max(0, ((profile?.credits_remaining || 0) / (plan.monthly_credits || 1)) * 100);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -263,13 +267,13 @@ function SubscriptionTab({ profile, card, navigate }) {
             </span>
           </div>
           <div style={{ textAlign: 'right' }}>
-            <p style={{ fontSize: 36, fontWeight: 800, color: profile?.is_unlimited || plan.is_unlimited ? '#ffd700' : '#f0f0f0', margin: 0 }}>
-              {profile?.is_unlimited || plan.is_unlimited ? '∞' : (profile?.credits_remaining ?? 0)}
+            <p style={{ fontSize: 36, fontWeight: 800, color: isMarketedUnlimited ? '#ffd700' : '#f0f0f0', margin: 0 }}>
+              {isMarketedUnlimited ? '∞' : (profile?.credits_remaining ?? 0)}
             </p>
             <p style={{ color: '#666', fontSize: 12, margin: 0 }}>credits remaining</p>
           </div>
         </div>
-        {!profile?.is_unlimited && !plan.is_unlimited && (
+        {!isMarketedUnlimited && (
           <>
             <div style={{ height: 8, borderRadius: 4, background: '#1a1a26', overflow: 'hidden', marginBottom: 8 }}>
               <div style={{ width: `${pct}%`, height: '100%', background: `linear-gradient(90deg,${color},${color}99)`, transition: 'width 0.5s' }} />

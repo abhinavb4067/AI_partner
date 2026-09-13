@@ -59,7 +59,7 @@ export default function Pricing() {
           <p style={{ color: '#666', fontSize: 16 }}>Credit-based system. Upgrade, downgrade or cancel anytime.</p>
           <div style={{ marginTop: 20, background: 'rgba(233,30,140,0.08)', border: '1px solid rgba(233,30,140,0.2)',
             borderRadius: 12, padding: '12px 20px', display: 'inline-block', fontSize: 13, color: '#e91e8c' }}>
-            💎 1 credit/message · 📸 5 credits/photo · 🎤 2 credits/voice
+            💎 1 credit/message · 📸 8 credits/photo · 🎤 15 credits/voice
           </div>
         </div>
 
@@ -102,10 +102,14 @@ function PlanCard({ plan, colors, icons, onSubscribe }) {
         {plan.price_monthly > 0 && <span style={{ color: '#555', fontSize: 13 }}>/month</span>}
       </div>
       <div style={{ marginBottom: 24 }}>
+        {/* Elite is marketed as "Unlimited" but is actually a high, hard cap
+            (see plan.monthly_credits) — a true is_unlimited=true bypasses all
+            credit gating server-side, which is what let usage costs spiral
+            uncontrolled before. Never flip is_unlimited back to true. */}
         <div style={{ fontSize: 22, fontWeight: 800, color, marginBottom: 4 }}>
-          {plan.is_unlimited ? '∞' : plan.monthly_credits?.toLocaleString()}
+          {plan.plan_name === 'elite' ? '∞' : plan.monthly_credits?.toLocaleString()}
         </div>
-        <div style={{ color: '#555', fontSize: 12 }}>{plan.is_unlimited ? 'Unlimited credits' : 'credits per month'}</div>
+        <div style={{ color: '#555', fontSize: 12 }}>{plan.plan_name === 'elite' ? 'Unlimited credits' : 'credits per month'}</div>
       </div>
       <button onClick={() => onSubscribe(plan)} disabled={anyLoading || isCurrent}
         style={{ width: '100%', padding: '12px', borderRadius: 10, border: 'none', fontWeight: 700, cursor: isCurrent ? 'default' : 'pointer',
