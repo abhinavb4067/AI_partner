@@ -57,6 +57,12 @@ class Settings(BaseSettings):
     # ── Media ────────────────────────────────────────────────────────────────
     MEDIA_FOLDER: str = "media"
 
+    # ── End-to-End Encryption ────────────────────────────────────────────────
+    # Single switch for the whole app. Flip to True to re-enable E2EE for chat
+    # messages/media. When False, messages are stored and served as plain
+    # text and the frontend skips all client-side encrypt/decrypt.
+    E2EE_ENABLED: bool = False
+
     # ── CORS ─────────────────────────────────────────────────────────────────
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000"
 

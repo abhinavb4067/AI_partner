@@ -341,6 +341,7 @@ function Chat() {
   const [charAbout, setCharAbout] = useState("");
   const [charPhoto, setCharPhoto] = useState(null);
   const [myPublicKey, setMyPublicKey] = useState("");
+  const [e2eeEnabled, setE2eeEnabled] = useState(false);
 
   // Deduct credits from local state
   const deductCredits = (amount) => {
@@ -354,8 +355,16 @@ function Chat() {
     });
   };
 
-  // ── Step 1: Initialize E2EE Keypair and sync with server ───────────────────
+  // ── Step 1: Check server E2EE switch, then initialize keypair if it's on ───
+  // Single on/off toggle lives in backend/app/core/config.py (settings.E2EE_ENABLED).
   useEffect(() => {
+    API.get("/api/chat/e2ee-status")
+      .then((r) => setE2eeEnabled(!!r.data?.enabled))
+      .catch(() => setE2eeEnabled(false));
+  }, []);
+
+  useEffect(() => {
+    if (!e2eeEnabled) return;
     try {
       getOrCreateKeyPair();
       const pubKey = getMyPublicKey();
@@ -372,7 +381,7 @@ function Chat() {
     } catch (err) {
       console.error("[E2EE] Key initialization error:", err);
     }
-  }, []);
+  }, [e2eeEnabled]);
 
   // ── Decrypt history messages helper ──────────────────────────────────────────
   const unpackAndDecryptMessage = useCallback((rawMsg) => {
@@ -564,12 +573,12 @@ function Chat() {
     setIsTyping(true);
 
     try {
-      const pubKey = getMyPublicKey();
-      const encryptedUserMsg = encryptForSelf(userMessage);
+      const pubKey = e2eeEnabled ? getMyPublicKey() : null;
+      const encryptedUserMsg = e2eeEnabled ? encryptForSelf(userMessage) : null;
 
-      const res = await API.post("/api/chat/", { 
-        user_id: loggedInUserId, 
-        char_id: charId, 
+      const res = await API.post("/api/chat/", {
+        user_id: loggedInUserId,
+        char_id: charId,
         message: userMessage,
         user_public_key: pubKey,
         encrypted_user_content: encryptedUserMsg
@@ -731,22 +740,26 @@ function Chat() {
             </div>
           </div>
 
-          {/* E2EE Active Security Badge */}
-          <div 
-            style={styles.e2eeBadge}
-            onClick={() => setShowSecurityModal(true)}
-            title="Click to view end-to-end encryption details"
-          >
-            <Lock size={12} />
-            <span>E2EE</span>
-          </div>
+          {/* E2EE Active Security Badge — only shown when settings.E2EE_ENABLED is on */}
+          {e2eeEnabled && (
+            <div
+              style={styles.e2eeBadge}
+              onClick={() => setShowSecurityModal(true)}
+              title="Click to view end-to-end encryption details"
+            >
+              <Lock size={12} />
+              <span>E2EE</span>
+            </div>
+          )}
         </div>
 
         {/* ── E2EE Notice Banner ── */}
-        <div style={styles.e2eeBanner} onClick={() => setShowSecurityModal(true)} role="button" tabIndex={0}>
-          <Lock size={12} />
-          <span>Messages and media are end-to-end encrypted. Tap to verify.</span>
-        </div>
+        {e2eeEnabled && (
+          <div style={styles.e2eeBanner} onClick={() => setShowSecurityModal(true)} role="button" tabIndex={0}>
+            <Lock size={12} />
+            <span>Messages and media are end-to-end encrypted. Tap to verify.</span>
+          </div>
+        )}
 
         {/* ── Messages ── */}
         <div style={styles.messages}>
@@ -1028,7 +1041,7 @@ function Chat() {
       )}
 
       {/* ── Key Backup Reminder ── */}
-      {showBackupPrompt && (
+      {e2eeEnabled && showBackupPrompt && (
         <KeyBackupPrompt
           onDismiss={() => setShowBackupPrompt(false)}
           onBackedUp={() => setShowBackupPrompt(false)}

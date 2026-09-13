@@ -10,8 +10,16 @@ from app.services.image_service import ImageService
 from app.services.memory_service import MemoryService
 from app.schemas.chat import ChatRequest
 from app.utils.crypto import encrypt_for_user, is_encrypted_payload
+from app.core.config import settings
 
 router = APIRouter()
+
+
+@router.get("/e2ee-status")
+async def e2ee_status():
+    """Single source of truth for whether E2EE is turned on. Toggle it via
+    settings.E2EE_ENABLED in app/core/config.py."""
+    return {"enabled": settings.E2EE_ENABLED}
 
 
 def clean_ai_reply(raw: str) -> str:
@@ -299,12 +307,14 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
     reply = re.sub(r"User:.*", "", reply, flags=re.DOTALL | re.IGNORECASE)
     reply = reply.strip()
 
-    # Determine encryption target
-    user_pubkey = request.user_public_key or user.e2e_public_key
+    # Determine encryption target (encryption fully disabled via settings.E2EE_ENABLED)
+    user_pubkey = (request.user_public_key or user.e2e_public_key) if settings.E2EE_ENABLED else None
 
-    # 5. Save user message to database (Encrypted at Rest)
+    # 5. Save user message to database (Encrypted at Rest, only if E2EE is enabled)
     if not is_initial_greeting:
-        if request.encrypted_user_content:
+        if not settings.E2EE_ENABLED:
+            user_db_content = request.message
+        elif request.encrypted_user_content:
             user_db_content = request.encrypted_user_content
         elif user_pubkey:
             user_db_content = encrypt_for_user(request.message, user_pubkey)
@@ -314,7 +324,7 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
         user_msg = ChatMessage(user_id=user.id, character_id=char.id, sender="user", content=user_db_content)
         db.add(user_msg)
 
-    # 6. Save AI reply to database (Encrypted at Rest)
+    # 6. Save AI reply to database (Encrypted at Rest, only if E2EE is enabled)
     db_reply_content = reply
     if final_local_path:
         db_image_url = f"/{final_local_path.replace(chr(92), '/')}"
