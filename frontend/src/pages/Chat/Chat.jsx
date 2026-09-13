@@ -849,7 +849,7 @@ function Chat() {
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
                 onKeyUp={(e) => e.key === "Enter" && message.trim() && sendMessage()}
-                placeholder={!isUnlimited && credits <= 0 ? "No credits — upgrade to continue" : "🔒 Message..."}
+                placeholder={!isUnlimited && credits <= 0 ? "No credits — upgrade to continue" : (e2eeEnabled ? "🔒 Message..." : "Message...")}
                 disabled={!isUnlimited && credits <= 0}
               />
               {!message.trim() && (
