@@ -140,7 +140,7 @@ class ImageService:
         local_path = ImageService._get_local_path(char_name, user_name, clean_desc)
         r2_key = local_path[len("media/"):].replace(os.sep, "/") if local_path.startswith("media" + os.sep) or local_path.startswith("media/") else local_path
 
-        if is_unrestricted:
+        if is_unrestricted and settings.LOCAL_GPU_IMAGE_GEN_ENABLED:
             print(f"🧠 Routing to Local GPU for uncensored generation | seed={seed}")
             try:
                 from app.services.local_image_gen import LocalImageGenerator
@@ -162,32 +162,36 @@ class ImageService:
                 print(f"💾 Saved locally (GPU): {local_path}")
                 return None, local_path
             except Exception as e:
-                print(f"❌ Local GPU generation failed: {e}")
-                return None, None
-        else:
-            print(f"📡 fal.ai request (SFW) | seed={seed}")
-            image_url = ImageService._call_fal(prompt, negative, seed, is_unrestricted)
-            if not image_url:
-                print("❌ fal.ai failed — no image URL returned")
-                return None, None
+                print(f"❌ Local GPU generation failed: {e} — falling back to fal.ai fast-sdxl")
+                # fall through to the fal.ai branch below instead of giving up
 
-            print(f"✅ fal.ai image URL: {image_url[:80]}...")
+        # fal.ai for both SFW (flux-pro/v1.1-ultra) and NSFW (fast-sdxl) —
+        # is_unrestricted selects the right model/payload inside _call_fal.
+        # This is also where NSFW requests land by default now, since
+        # LOCAL_GPU_IMAGE_GEN_ENABLED is off (no GPU on this server).
+        print(f"📡 fal.ai request ({'NSFW/fast-sdxl' if is_unrestricted else 'SFW/flux-pro'}) | seed={seed}")
+        image_url = ImageService._call_fal(prompt, negative, seed, is_unrestricted)
+        if not image_url:
+            print("❌ fal.ai failed — no image URL returned")
+            return None, None
 
-            if settings.R2_ENABLED:
-                image_bytes = ImageService._fetch_bytes(image_url)
-                if image_bytes and R2Service.upload_bytes(r2_key, image_bytes):
-                    print(f"☁️ Saved to R2: {r2_key}")
-                    return image_url, local_path
-                print("❌ R2 upload failed — falling back to local disk")
+        print(f"✅ fal.ai image URL: {image_url[:80]}...")
 
-            success = ImageService._download(image_url, local_path)
-            if success:
-                print(f"💾 Saved locally: {local_path}")
+        if settings.R2_ENABLED:
+            image_bytes = ImageService._fetch_bytes(image_url)
+            if image_bytes and R2Service.upload_bytes(r2_key, image_bytes):
+                print(f"☁️ Saved to R2: {r2_key}")
                 return image_url, local_path
+            print("❌ R2 upload failed — falling back to local disk")
 
-            # Return external (fal.ai) URL as fallback even if saving failed —
-            # note fal.ai URLs expire, so this is a last resort only.
-            return image_url, None
+        success = ImageService._download(image_url, local_path)
+        if success:
+            print(f"💾 Saved locally: {local_path}")
+            return image_url, local_path
+
+        # Return external (fal.ai) URL as fallback even if saving failed —
+        # note fal.ai URLs expire, so this is a last resort only.
+        return image_url, None
 
     # ── fal.ai REST call ───────────────────────────────────────────────────────
     @staticmethod

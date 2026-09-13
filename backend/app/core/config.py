@@ -32,6 +32,13 @@ class Settings(BaseSettings):
     OPENROUTER_API_KEY: str = ""
     OLLAMA_URL: str = "http://localhost:11434/api/chat"
     FAL_API_KEY: str = ""
+    # Off by default: NSFW image generation was routing to a local Stable
+    # Diffusion pipeline that hard-requires a CUDA GPU (app/services/
+    # local_image_gen.py). This server has no GPU, so every NSFW photo
+    # request was silently failing. NSFW now routes to fal.ai's fast-sdxl
+    # instead (see image_service.py) — flip this back on only once deployed
+    # to a GPU-equipped machine, if ever preferred over the fal.ai cost.
+    LOCAL_GPU_IMAGE_GEN_ENABLED: bool = False
 
     # ── Email Delivery (Resend) ──────────────────────────────────────────────
     RESEND_API_KEY: str = ""
