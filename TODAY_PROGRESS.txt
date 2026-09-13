@@ -62,3 +62,141 @@ this turned out to be about the Claude Code chat panel in the VSCode extension g
 blank (likely context summarization or a session/tab reset), NOT an app bug. Nothing
 to fix in the codebase for that; if it recurs, check for a session/history picker in
 the extension to reopen the prior transcript.
+
+
+================================================================================
+Date: 2026-09-13
+================================================================================
+
+=== WHAT WAS DONE TODAY ===
+Full security audit of backend/ + fixes for everything found, then a cost/pricing
+pass, then a Cloudflare R2 storage migration, then a real NSFW image-gen bug fix.
+Everything below is committed to git (main branch) AND already deployed live on
+the server (165.22.11.170, /var/www/AI_partner) — this was not just planned, it's
+running in production right now.
+
+--- 1. SECURITY FIXES (all deployed) ---
+Critical:
+  - chat.py: POST /api/chat/ and GET /api/chat/history/{char_id} now require JWT
+    auth (Depends(get_current_user)) — previously anyone could chat as/drain
+    credits of/trigger paid image-gen for ANY user by just knowing their email,
+    since user_id came from the request body, not the token.
+  - payment_service.py: removed the "if 'DUMMY' in key: auto-approve" bypass.
+    Replaced with explicit PAYMENT_MOCK_MODE setting (default False) + fails
+    CLOSED (rejects) when gateway keys are missing/unconfigured.
+High:
+  - Added slowapi rate limiting: login/register/OTP/reset-password (5/min),
+    chat (20/min), chat history (60/min), TTS/transcribe (10/min).
+  - /api/payment/verify now has an idempotency guard (can't be credited twice).
+  - config.py refuses to boot if CORS_ORIGINS contains "*" (paired with
+    allow_credentials=True that's a token-theft vector).
+Medium/low:
+  - Google-only accounts (empty hashed_password) can no longer be silently
+    hijacked by whoever calls /login first with any password.
+  - main.py refuses to boot in production with the default admin password.
+  - Media (AI-companion chat photos at /media/<char>/<user>/<file>) is now
+    auth-gated + ownership-checked via new app/api/routes/media.py — this
+    ALSO required an nginx fix (nginx_backend.conf) since nginx was serving
+    /media/ directly via `alias`, bypassing FastAPI entirely; added a regex
+    location for the 3-segment path shape that proxies to the backend instead.
+  - WebSocket auth token moved off the URL path onto the Sec-WebSocket-Protocol
+    subprotocol (ws_chat.py) so it stops appearing in proxy logs/browser
+    history. Old /{token} route kept one release as a fallback.
+  - requirements.txt fully pinned to versions verified via `pip freeze` on the
+    actual production venv (not just latest-locally-installed).
+  - ADMIN PASSWORD WAS CHANGED on the server — new password is in
+    backend/.env on the server (ADMIN_PASSWORD=...) and was shown once to the
+    user directly in chat. NOT repeated here since this file is git-tracked.
+    ENVIRONMENT=production was also set in .env (arms the boot-guard above).
+
+--- 2. CLOUDFLARE R2 MIGRATION (implemented, bucket created, LIVE) ---
+  - New app/services/r2_service.py (S3-compatible client via boto3).
+  - image_service.py uploads new chat-generated photos straight to R2 instead
+    of local disk; falls back to local disk on upload failure or when
+    R2_ENABLED=False. Old local images still work via automatic fallback in
+    the media route (checks R2 first via object_exists, falls through).
+  - media.py: ownership-checked, then redirects (302) to a 5-min presigned R2
+    URL — image bytes never touch the app server's bandwidth once on R2.
+  - R2_ENABLED=true is SET on the server right now. Bucket: avoiga-chat-media.
+    Account ID + API token credentials are in backend/.env on the server —
+    NOT duplicated in this file (it's git-tracked).
+  - Verified end-to-end with a real upload/presign/fetch/cleanup test AND a
+    real ownership-check test (owner token = 200, wrong user's token = 404).
+  - Setup docs for reference: backend/docs/R2_SETUP.md
+
+--- 3. PRICING (implemented, DB updated live, no longer test values) ---
+  - Credit costs recalibrated to real API cost ratios: text=1, photo 5->8,
+    voice 2->15 (chat.py / voice.py).
+  - Real plans now live in the SubscriptionPlan table (were placeholder test
+    values like Starter=Rs10/10 credits before):
+      Free:    Rs0/mo    — 30 credits
+      Starter: Rs149/mo  — 400 credits
+      Pro:     Rs399/mo  — 1500 credits
+      Elite:   Rs899/mo  — 6000 credits, marketed as "Unlimited" in the UI but
+               is_unlimited stays FALSE with a real hard cap enforced
+               server-side (true is_unlimited=True bypasses ALL credit
+               gating in chat.py — that was the actual cost-abuse risk).
+  - Frontend (Pricing.jsx / Profile.jsx / PaymentModal.jsx) shows "Unlimited"
+    for Elite by checking plan_name=="elite", not the is_unlimited flag.
+  - Fixed stale `features` text array on each plan (was still showing old
+    credit numbers even after monthly_credits was updated).
+  - Breakeven at current Rs600/mo server + ~Rs85/mo domain (~Rs700/mo fixed
+    costs): covered by as few as ~3 paying Starter-tier customers.
+
+--- 4. FRONTEND DEP SECURITY (fixed, deployed) ---
+  - Ran `npm audit fix` — resolved all 13 vulnerabilities (1 low/2 moderate/
+    10 high), all within existing semver ranges, no package.json version
+    bumps needed, build verified clean before+after deploy.
+
+--- 5. BUG FOUND + FIXED: NSFW image generation was completely broken ---
+  - Root cause: NSFW/explicit photo requests routed to a local Stable
+    Diffusion pipeline (app/services/local_image_gen.py) requiring
+    torch+diffusers and pipe.to("cuda") — confirmed NONE of that exists on
+    this server (no torch/diffusers installed, no nvidia-smi, no GPU at all).
+    Every NSFW photo request was silently failing (caught by try/except,
+    returned no image, nothing logged clearly) — likely since this server
+    was first set up, since the app's character personas actively push
+    toward NSFW content.
+  - Fix: NSFW now routes to fal.ai's fast-sdxl (~Rs0.33/photo) instead of the
+    local GPU path — same fal.ai account already used for SFW, no new
+    credentials needed. Verified live with a real fal.ai call that returned
+    an actual image URL (HTTP 200).
+  - Local GPU path kept intact behind new setting
+    LOCAL_GPU_IMAGE_GEN_ENABLED (default False), for if a GPU server is used
+    later.
+
+=== NOT YET DONE / NEXT STEPS FOR TOMORROW ===
+1. **Async blocking-call fix (important, not yet done)**: image_service.py
+   still uses synchronous `requests.post/get` calls inside async route
+   handlers. Since the server runs a SINGLE gunicorn worker (-w 1), any one
+   photo-generation request currently freezes the ENTIRE server for every
+   other user (logins, chats, everything) for the 5-30s the fal.ai call
+   takes. Fix: wrap those calls in `asyncio.to_thread(...)` or switch
+   image_service.py to httpx.AsyncClient like ai_service.py already does.
+   This matters MORE than the droplet upgrade below — a bigger server alone
+   doesn't fix this, it just raises how many simultaneous blocked requests
+   before things queue up.
+2. **Droplet upgrade decision pending**: current server is 1 vCPU/512MB RAM
+   (~Rs600/mo), shared with the unrelated Rent Management app + Postgres.
+   Realistic concurrent-user capacity right now: ~5-10 people at the exact
+   same moment before things degrade. A $18-24/mo (2 vCPU/4GB) droplet with
+   2-4 gunicorn workers would handle ~100-150 concurrent users comfortably —
+   but only once item #1 above is also fixed. User was deciding whether/when
+   to upgrade; no droplet resize has been done yet.
+3. Consider whether to also fix the SFW flux-pro-ultra cost tail-risk
+   (₹5/photo) the same way — e.g. defaulting SFW to a cheaper model too, or
+   leaving flux-pro since it's higher quality and the worst-case cost is now
+   less likely given NSFW (the more common request type per the persona
+   prompts) already moved to the cheap fast-sdxl path.
+4. Mobile app (mobile_app/) review from 2026-09-11 above is still pending —
+   was not touched today, remains a separate open item.
+5. Server disk is tight: 8.7GB total, was 78% full before R2 migration.
+   Worth checking again now that new photos go to R2 instead of local disk —
+   disk pressure should stop growing from that source at least.
+
+=== HOW TO PICK THIS BACK UP ===
+Server access: SSH key at "D:\My Projects\server for  ai girl friend\do_ed25519",
+root@165.22.11.170. App lives at /var/www/AI_partner (git remote:
+github.com/abhinavb4067/AI_partner, branch main — server is in sync with it
+as of the end of today's session). Backend service: `systemctl restart
+fastapi`. Frontend: `cd frontend && npm run build && systemctl restart nginx`.
