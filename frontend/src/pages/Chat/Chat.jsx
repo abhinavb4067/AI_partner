@@ -811,7 +811,7 @@ function Chat() {
                     }
                   }} />}
                   <div style={{ position: "absolute", bottom: "4px", right: "8px", fontSize: "10px", color: isAI ? "rgba(0,0,0,0.4)" : "rgba(255,255,255,0.8)", fontWeight: "500", display: "flex", alignItems: "center", gap: 3 }}>
-                    <Lock size={9} color={isAI ? "rgba(0,168,132,0.8)" : "rgba(255,255,255,0.8)"} />
+                    {e2eeEnabled && <Lock size={9} color={isAI ? "rgba(0,168,132,0.8)" : "rgba(255,255,255,0.8)"} />}
                     {new Date(msg.time || new Date()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: true }).toLowerCase()}
                   </div>
                 </div>
