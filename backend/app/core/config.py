@@ -62,6 +62,16 @@ class Settings(BaseSettings):
     # ── Media ────────────────────────────────────────────────────────────────
     MEDIA_FOLDER: str = "media"
 
+    # ── Cloudflare R2 (chat-generated photo storage) ───────────────────────────
+    # Off by default so local-disk storage keeps working until a bucket exists.
+    # Flip on once R2_* below are filled in — see docs/R2_SETUP.md for the
+    # exact Cloudflare dashboard steps to create the bucket + API token.
+    R2_ENABLED: bool = False
+    R2_ACCOUNT_ID: str = ""
+    R2_ACCESS_KEY_ID: str = ""
+    R2_SECRET_ACCESS_KEY: str = ""
+    R2_BUCKET_NAME: str = "avoiga-chat-media"
+
     # ── End-to-End Encryption ────────────────────────────────────────────────
     # Independent switches — AI companion chat and human-to-human chat each
     # have their own E2EE toggle so one can be on while the other is off.

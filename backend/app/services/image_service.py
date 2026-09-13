@@ -10,6 +10,7 @@ import os
 from datetime import datetime
 
 from app.core.config import settings
+from app.services.r2_service import R2Service
 
 
 FAL_HEADERS = {
@@ -132,19 +133,32 @@ class ImageService:
             )
 
         # ── 5. Generate Image (Local or Cloud) ──────────────────────────────────
+        # local_path is always the *logical* path ("media/<char>/<user>/<file>")
+        # used as the URL/DB-stored identifier regardless of where the bytes
+        # actually live — R2 or local disk. This keeps chat.py, the media
+        # route, and old DB rows all working unchanged across the migration.
         local_path = ImageService._get_local_path(char_name, user_name, clean_desc)
-        
+        r2_key = local_path[len("media/"):].replace(os.sep, "/") if local_path.startswith("media" + os.sep) or local_path.startswith("media/") else local_path
+
         if is_unrestricted:
             print(f"🧠 Routing to Local GPU for uncensored generation | seed={seed}")
             try:
                 from app.services.local_image_gen import LocalImageGenerator
                 pil_image = LocalImageGenerator.generate(prompt, negative, seed=seed)
-                
-                # Save the PIL image locally
+
+                if settings.R2_ENABLED:
+                    import io
+                    buf = io.BytesIO()
+                    pil_image.save(buf, format="JPEG")
+                    if R2Service.upload_bytes(r2_key, buf.getvalue()):
+                        print(f"☁️ Saved to R2 (GPU): {r2_key}")
+                        return None, local_path
+                    print("❌ R2 upload failed — falling back to local disk")
+
+                # Local disk (default, or R2 upload failure fallback)
                 abs_save_path = os.path.abspath(local_path)
                 os.makedirs(os.path.dirname(abs_save_path), exist_ok=True)
                 pil_image.save(abs_save_path)
-                
                 print(f"💾 Saved locally (GPU): {local_path}")
                 return None, local_path
             except Exception as e:
@@ -158,12 +172,21 @@ class ImageService:
                 return None, None
 
             print(f"✅ fal.ai image URL: {image_url[:80]}...")
+
+            if settings.R2_ENABLED:
+                image_bytes = ImageService._fetch_bytes(image_url)
+                if image_bytes and R2Service.upload_bytes(r2_key, image_bytes):
+                    print(f"☁️ Saved to R2: {r2_key}")
+                    return image_url, local_path
+                print("❌ R2 upload failed — falling back to local disk")
+
             success = ImageService._download(image_url, local_path)
             if success:
                 print(f"💾 Saved locally: {local_path}")
                 return image_url, local_path
 
-            # Return external URL as fallback even if local save failed
+            # Return external (fal.ai) URL as fallback even if saving failed —
+            # note fal.ai URLs expire, so this is a last resort only.
             return image_url, None
 
     # ── fal.ai REST call ───────────────────────────────────────────────────────
@@ -231,6 +254,17 @@ class ImageService:
         os.makedirs(folder, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         return os.path.join(folder, f"{keyword}_{timestamp}.jpg")
+
+    @staticmethod
+    def _fetch_bytes(url: str) -> bytes | None:
+        try:
+            r = requests.get(url, timeout=60)
+            if r.status_code == 200 and len(r.content) > 1_000:
+                return r.content
+            print(f"   Fetch failed: status={r.status_code}, size={len(r.content)}")
+        except Exception as e:
+            print(f"   Fetch error: {e}")
+        return None
 
     @staticmethod
     def _download(url: str, filepath: str) -> bool:

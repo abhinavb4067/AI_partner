@@ -20,13 +20,15 @@ from __future__ import annotations
 import os
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import decode_token
 from app.models.all_models import UserAccount
+from app.services.r2_service import R2Service
 
 router = APIRouter()
 
@@ -96,6 +98,22 @@ async def get_chat_image(
     if user_name != _sanitize(current_user.user_id):
         raise HTTPException(status_code=404, detail="Not found")
 
+    # ── R2 path (preferred once configured) ────────────────────────────────
+    # Ownership was already verified above; a short-lived presigned URL is the
+    # only thing handed back, so the actual image bytes never flow through
+    # this (RAM-constrained) app server — the browser fetches straight from R2.
+    if settings.R2_ENABLED:
+        r2_key = f"{char_name}/{user_name}/{filename}"
+        # generate_presigned_url signs a URL unconditionally regardless of
+        # whether the object exists, so existence has to be checked first —
+        # otherwise a pre-migration image that only ever lived on local disk
+        # would 404 at R2 instead of correctly falling through below.
+        if R2Service.object_exists(r2_key):
+            presigned = R2Service.presigned_get_url(r2_key)
+            if presigned:
+                return RedirectResponse(url=presigned, status_code=302)
+
+    # ── Local disk fallback (pre-migration images, or R2 not yet configured) ──
     # Reject any path-traversal attempt and confirm the resolved path is still
     # inside media/ before touching the filesystem.
     candidate = os.path.abspath(os.path.join(MEDIA_ROOT, char_name, user_name, filename))
