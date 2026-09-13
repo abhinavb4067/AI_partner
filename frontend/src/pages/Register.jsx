@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { GoogleLogin } from '@react-oauth/google';
 import brand from '../config/brand';
 import API, { broadcastAuthEvent } from '../api/api';
+import { getOrCreateKeyPair, wrapKeyForServerBackup } from '../utils/crypto';
 
 export default function Register() {
   const [step, setStep] = useState(1); // 1: form, 2: otp
@@ -164,6 +165,16 @@ export default function Register() {
         email: d.email, name: d.name, plan_name: d.plan_name,
         credits_remaining: d.credits_remaining, is_unlimited: d.is_unlimited,
       }));
+      // Generate this device's E2EE key and immediately back it up to the
+      // account (password-wrapped) so future logins on any device/browser
+      // can restore it automatically instead of losing message history.
+      try {
+        getOrCreateKeyPair();
+        const wrapped = wrapKeyForServerBackup(form.password, d.email || form.email);
+        await API.post('/api/auth/e2e-backup', { encrypted_backup: wrapped });
+      } catch (e) {
+        console.error('[E2EE] Initial key backup failed:', e);
+      }
       broadcastAuthEvent('NEW_LOGIN', { user_id: d.user_id });
       navigate('/select-character');
     } catch (err) {

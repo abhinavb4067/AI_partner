@@ -1,6 +1,7 @@
 """Pydantic schemas for auth endpoints."""
 from __future__ import annotations
 from pydantic import BaseModel, EmailStr, field_validator
+from typing import Optional
 import re
 
 
@@ -35,6 +36,7 @@ class TokenResponse(BaseModel):
     plan_name: str
     credits_remaining: int
     is_unlimited: bool
+    e2e_key_backup: Optional[str] = None  # Password-wrapped E2EE private key, if one was ever uploaded
 
 
 class AdminLoginRequest(BaseModel):

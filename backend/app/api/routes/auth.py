@@ -130,6 +130,7 @@ async def login(req: LoginRequest, db: Session = Depends(get_db)):
         plan_name=plan.plan_name if plan else "free",
         credits_remaining=user.credits_remaining,
         is_unlimited=user.is_unlimited,
+        e2e_key_backup=user.e2e_key_backup,
     )
 
 
@@ -189,6 +190,7 @@ async def google_login(req: GoogleLoginRequest, db: Session = Depends(get_db)):
         plan_name=plan.plan_name if plan else "free",
         credits_remaining=user.credits_remaining,
         is_unlimited=user.is_unlimited,
+        e2e_key_backup=user.e2e_key_backup,
     )
 
 
@@ -243,6 +245,27 @@ async def reset_password(req: UnifiedResetPasswordRequest, db: Session = Depends
         return {"message": "Password has been reset successfully. You can now log in."}
 
     raise HTTPException(status_code=400, detail="Email and 6-digit OTP are required to reset password.")
+
+
+class E2EKeyBackupRequest(BaseModel):
+    encrypted_backup: str
+
+
+@router.post("/e2e-backup")
+async def upload_e2e_backup(
+    req: E2EKeyBackupRequest,
+    current_user: UserAccount = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Stores the client's E2EE private key, encrypted client-side with a key
+    derived from the user's password. The server never sees the plaintext
+    private key — this only lets the same account restore it after login on
+    a new device/browser instead of losing message history permanently.
+    """
+    current_user.e2e_key_backup = req.encrypted_backup
+    db.commit()
+    return {"message": "E2EE key backup saved."}
 
 
 @router.get("/me")

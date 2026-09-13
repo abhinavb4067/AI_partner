@@ -3,6 +3,27 @@ import { useNavigate, Link } from 'react-router-dom';
 import { GoogleLogin } from '@react-oauth/google';
 import brand from '../config/brand';
 import API, { broadcastAuthEvent } from '../api/api';
+import { restoreKeyFromServerBackup, wrapKeyForServerBackup, getOrCreateKeyPair } from '../utils/crypto';
+
+// Restores the E2EE key from the account's server-side password-wrapped
+// backup (if one exists), or — for first-time setups — generates/keeps the
+// local key and uploads a fresh backup so future logins on other devices
+// can recover it too. Never blocks navigation on failure.
+async function syncE2EEKeyOnLogin(email, password, encryptedBackup) {
+  try {
+    if (encryptedBackup) {
+      const restored = restoreKeyFromServerBackup(encryptedBackup, password, email);
+      if (restored) return;
+      // Wrong password derivation (e.g. password was reset) or corrupted blob —
+      // fall through and keep/generate a local key instead of blocking login.
+    }
+    getOrCreateKeyPair();
+    const wrapped = wrapKeyForServerBackup(password, email);
+    await API.post('/api/auth/e2e-backup', { encrypted_backup: wrapped });
+  } catch (e) {
+    console.error('[E2EE] Key sync on login failed:', e);
+  }
+}
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -53,6 +74,7 @@ export default function Login() {
         email: d.email, name: d.name, plan_name: d.plan_name,
         credits_remaining: d.credits_remaining, is_unlimited: d.is_unlimited,
       }));
+      await syncE2EEKeyOnLogin(d.email || email, password, d.e2e_key_backup);
       broadcastAuthEvent('NEW_LOGIN', { user_id: d.user_id });
       navigate('/select-character');
     } catch (err) {

@@ -349,6 +349,85 @@ export function importKeyBackup(backupJson) {
   }
 }
 
+// ── Password-Wrapped Server Backup (automatic cross-device restore) ──────────
+//
+// Losing localStorage (cleared cache, new browser, new device) used to mean
+// permanent message loss — the private key only ever lived on one device.
+// To fix that without breaking zero-knowledge, we let the client wrap its own
+// private key with a key *derived from the account password* and store only
+// that ciphertext on the server. The server can store/return the blob but,
+// since it never receives the plaintext password-derived wrapping key, it
+// cannot decrypt it. On any future login with the correct password, the
+// client re-derives the same wrapping key and restores the original private
+// key automatically — no manual export/import needed.
+//
+// Caveat: since the wrapping key is derived from the password, resetting the
+// password (not just changing it while logged in) orphans old backups — the
+// same fundamental trade-off Signal/WhatsApp make with PIN-based backups.
+
+/**
+ * Derives a 32-byte symmetric key from the account password + email.
+ * Never sent to the server — used only to wrap/unwrap the local private key.
+ */
+function deriveWrappingKey(password, email) {
+  const material = encodeUTF8(`${(email || '').toLowerCase().trim()}::e2ee-backup::${password}`);
+  return nacl.hash(material).slice(0, 32); // nacl.hash = SHA-512, take first 32 bytes
+}
+
+/**
+ * Encrypts the current device's E2EE keypair with a password-derived key,
+ * producing a blob that's safe to store on the server.
+ *
+ * @returns {string} Base64 payload: nonce (24B) || ciphertext
+ */
+export function wrapKeyForServerBackup(password, email) {
+  const kp = getOrCreateKeyPair();
+  const wrappingKey = deriveWrappingKey(password, email);
+  const payload = JSON.stringify({
+    version: 1,
+    publicKey: encodeBase64(kp.publicKey),
+    secretKey: encodeBase64(kp.secretKey),
+  });
+
+  const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
+  const ciphertext = nacl.secretbox(encodeUTF8(payload), nonce, wrappingKey);
+
+  const combined = new Uint8Array(nonce.length + ciphertext.length);
+  combined.set(nonce);
+  combined.set(ciphertext, nonce.length);
+  return encodeBase64(combined);
+}
+
+/**
+ * Decrypts a server-stored backup blob with a password-derived key and
+ * installs the recovered keypair into localStorage.
+ *
+ * @returns {boolean} true if the backup was successfully restored
+ */
+export function restoreKeyFromServerBackup(encryptedBlobB64, password, email) {
+  if (!encryptedBlobB64) return false;
+  try {
+    const wrappingKey = deriveWrappingKey(password, email);
+    const combined = decodeBase64(encryptedBlobB64);
+    if (combined.length <= nacl.secretbox.nonceLength) return false;
+
+    const nonce = combined.slice(0, nacl.secretbox.nonceLength);
+    const ciphertext = combined.slice(nacl.secretbox.nonceLength);
+    const plaintext = nacl.secretbox.open(ciphertext, nonce, wrappingKey);
+    if (!plaintext) return false; // wrong password (e.g. reset since backup) or corrupted
+
+    const data = JSON.parse(decodeUTF8(plaintext));
+    if (!data.publicKey || !data.secretKey) return false;
+
+    localStorage.setItem(PUBLIC_KEY_STORAGE, data.publicKey);
+    localStorage.setItem(PRIVATE_KEY_STORAGE, data.secretKey);
+    return true;
+  } catch (e) {
+    console.error('[E2EE] Server backup restore failed:', e);
+    return false;
+  }
+}
+
 /**
  * Universal decryptor for any chat message (AI or Human).
  * Attempts in order:
