@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
@@ -25,6 +25,7 @@ from app.schemas.auth import (
 )
 from app.api.deps import get_current_user
 from app.services.otp_service import OTPService
+from app.core.limiter import limiter
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 from app.core.config import settings
@@ -34,7 +35,8 @@ router = APIRouter()
 
 
 @router.post("/send-register-otp", response_model=OTPResponse)
-async def send_register_otp(req: SendRegisterOTPRequest, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+async def send_register_otp(request: Request, req: SendRegisterOTPRequest, db: Session = Depends(get_db)):
     """Generates and sends a 5-minute email verification OTP before account creation."""
     clean_email = req.email.lower().strip()
     clean_username = req.username.lower().replace(" ", "").strip()
@@ -50,7 +52,8 @@ async def send_register_otp(req: SendRegisterOTPRequest, db: Session = Depends(g
 
 
 @router.post("/register", response_model=TokenResponse)
-async def register(req: RegisterWithOTPRequest, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+async def register(request: Request, req: RegisterWithOTPRequest, db: Session = Depends(get_db)):
     clean_email = req.email.lower().strip()
     clean_username = req.username.lower().replace(" ", "").strip()
 
@@ -97,20 +100,28 @@ async def register(req: RegisterWithOTPRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(req: LoginRequest, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+async def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
     clean_email = req.email.lower().strip()
     user = db.query(UserAccount).filter((UserAccount.user_id == clean_email) | (UserAccount.email == clean_email)).first()
 
     if not user:
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    # Legacy users may have no hashed_password — treat email as temp password
-    if user.hashed_password:
-        if not verify_password(req.password, user.hashed_password):
-            raise HTTPException(status_code=401, detail="Invalid email or password")
-    else:
-        # Set password on first login for legacy users
-        user.hashed_password = hash_password(req.password)
+    if not user.hashed_password:
+        # Google-only accounts (and any account with no password set yet) must
+        # not accept an arbitrary first password here — that let anyone who
+        # knew/guessed the email "claim" the account before its real owner ever
+        # set a password. They have to go through OTP-based password reset,
+        # which proves control of the email inbox, before password login works.
+        raise HTTPException(
+            status_code=401,
+            detail="This account has no password set (likely created via Google sign-in). "
+                   "Use 'Forgot password' to set one via email verification, or continue with Google.",
+        )
+
+    if not verify_password(req.password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
 
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account is disabled")
@@ -195,7 +206,8 @@ async def google_login(req: GoogleLoginRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/forgot-password", response_model=OTPResponse)
-async def forgot_password(req: ForgotPasswordRequest, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+async def forgot_password(request: Request, req: ForgotPasswordRequest, db: Session = Depends(get_db)):
     clean_email = req.email.lower().strip()
     user = db.query(UserAccount).filter((UserAccount.user_id == clean_email) | (UserAccount.email == clean_email)).first()
     if not user:
@@ -218,7 +230,8 @@ class UnifiedResetPasswordRequest(BaseModel):
 
 
 @router.post("/reset-password")
-async def reset_password(req: UnifiedResetPasswordRequest, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+async def reset_password(request: Request, req: UnifiedResetPasswordRequest, db: Session = Depends(get_db)):
     # Method 1: Reset using 6-Digit OTP (5-minute limit)
     if req.otp and req.email:
         clean_email = req.email.lower().strip()

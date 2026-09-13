@@ -131,8 +131,8 @@ class ConnectionManager:
         # Maps user_id / alias to their set of active WebSockets
         self.active_connections: Dict[str, Set[WebSocket]] = defaultdict(set)
 
-    async def connect(self, websocket: WebSocket, user_keys: list):
-        await websocket.accept()
+    async def connect(self, websocket: WebSocket, user_keys: list, subprotocol: str | None = None):
+        await websocket.accept(subprotocol=subprotocol)
         for k in user_keys:
             if k:
                 self.active_connections[str(k)].add(websocket)
@@ -267,19 +267,52 @@ async def get_user_from_token(token: str, db: Session) -> UserAccount:
         return None
 
 
-@router.websocket("/{token}")
-async def websocket_endpoint(websocket: WebSocket, token: str):
+@router.websocket("/connect")
+async def websocket_endpoint(websocket: WebSocket):
+    # Auth token travels as the WebSocket subprotocol, not the URL, so it
+    # never ends up in nginx/proxy access logs or browser history the way a
+    # path segment or query string would. The frontend passes it as
+    # `new WebSocket(url, [token])`; the browser sends that as the
+    # Sec-WebSocket-Protocol header, exposed here as websocket.scope["subprotocols"].
+    # /{token} is kept below, one release, purely so already-open tabs with the
+    # old URL cached don't hard-fail — remove once traffic has cycled.
+    subprotocols = websocket.scope.get("subprotocols") or []
+    token = subprotocols[0] if subprotocols else None
+
     db = SessionLocal()
-    user = await get_user_from_token(token, db)
-    
+    user = await get_user_from_token(token, db) if token else None
+
     if not user:
         await websocket.close(code=1008)
         db.close()
         return
-        
+
+    user_id = user.id
+    user_keys = [user.id, user.user_id, user.email]
+    await manager.connect(websocket, user_keys, subprotocol=token)
+    await _run_ws_loop(websocket, user, db)
+
+
+@router.websocket("/{token}")
+async def websocket_endpoint_legacy(websocket: WebSocket, token: str):
+    """Deprecated: token-in-URL fallback for tabs/bundles still holding the old
+    connect URL across a deploy. Remove once traffic has fully cycled to /connect."""
+    db = SessionLocal()
+    user = await get_user_from_token(token, db)
+
+    if not user:
+        await websocket.close(code=1008)
+        db.close()
+        return
+
     user_id = user.id
     user_keys = [user.id, user.user_id, user.email]
     await manager.connect(websocket, user_keys)
+    await _run_ws_loop(websocket, user, db)
+
+
+async def _run_ws_loop(websocket: WebSocket, user: UserAccount, db: Session):
+    user_id = user.id
     
     try:
         while True:

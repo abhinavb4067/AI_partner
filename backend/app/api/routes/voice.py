@@ -1,7 +1,7 @@
 """ElevenLabs voice TTS endpoint."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -11,6 +11,7 @@ from app.core.database import get_db
 from app.models.all_models import Character, UserAccount
 from app.api.deps import get_current_user
 from app.services.voice_service import VoiceService
+from app.core.limiter import limiter
 
 router = APIRouter()
 
@@ -24,7 +25,9 @@ class TTSRequest(BaseModel):
 
 
 @router.post("/tts")
+@limiter.limit("10/minute")
 async def text_to_speech(
+    request: Request,
     req: TTSRequest,
     current_user: UserAccount = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -59,7 +62,9 @@ async def text_to_speech(
 
 
 @router.post("/transcribe")
+@limiter.limit("10/minute")
 async def transcribe_audio(
+    request: Request,
     file: UploadFile = File(...),
     current_user: UserAccount = Depends(get_current_user),
 ):

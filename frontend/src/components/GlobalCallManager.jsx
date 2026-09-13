@@ -42,9 +42,11 @@ export default function GlobalCallManager() {
       try {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const host = window.location.host;
-        const wsUrl = `${protocol}//${host}/api/ws/chat/${token}`;
+        const wsUrl = `${protocol}//${host}/api/ws/chat/connect`;
 
-        socket = new WebSocket(wsUrl);
+        // Token rides as the WS subprotocol (not the URL) so it doesn't end
+        // up in proxy access logs or browser history.
+        socket = new WebSocket(wsUrl, [token]);
         ws.current = socket;
 
         socket.onopen = () => {

@@ -10,14 +10,17 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from app.core.config import settings
+from app.core.limiter import limiter
 from app.core.database import engine, Base, SessionLocal
 from app.core.security import hash_password
 from app.models.all_models import AdminUser  # noqa: F401 — ensures all models are registered
 import app.models.all_models  # noqa
 
-from app.api.routes import auth, chat
+from app.api.routes import auth, chat, media
 from app.api.routes import admin_auth, admin, profile, payment, voice, social, ws_chat
 import firebase_admin
 from firebase_admin import credentials
@@ -81,6 +84,12 @@ async def lifespan(app: FastAPI):
 
 def _seed_admin() -> None:
     """Create the superadmin from .env if not already in DB."""
+    if settings.ENVIRONMENT.lower() == "production" and settings.ADMIN_PASSWORD == "Admin@123":
+        raise RuntimeError(
+            "ENVIRONMENT=production but ADMIN_PASSWORD is still the default 'Admin@123'. "
+            "Set a strong ADMIN_PASSWORD in the production .env before starting the app."
+        )
+
     db = SessionLocal()
     try:
         existing = db.query(AdminUser).filter(AdminUser.email == settings.ADMIN_EMAIL).first()
@@ -111,6 +120,10 @@ app = FastAPI(
     redoc_url="/api/redoc",
 )
 
+# ── Rate limiting ─────────────────────────────────────────────────────────────
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # ── CORS ──────────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
@@ -131,9 +144,15 @@ app.include_router(admin.router,      prefix="/api/admin",       tags=["Admin"])
 app.include_router(social.router,     prefix="/api/social",      tags=["Social"])
 app.include_router(ws_chat.router,    prefix="/api/ws/chat",     tags=["Human Chat Websocket"])
 
-# ── Static Files ──────────────────────────────────────────────────────────────
+# ── Media ─────────────────────────────────────────────────────────────────────
 os.makedirs("media", exist_ok=True)
 os.makedirs("maya_media", exist_ok=True)
+
+# Auth-gated route for AI-companion chat-generated photos — MUST be registered
+# before the static /media mount below so its 3-segment
+# /media/<char>/<user>/<file> pattern wins the match ahead of the public mount.
+app.include_router(media.router, prefix="/media", tags=["Media"])
+
 app.mount("/media",      StaticFiles(directory="media"),      name="media")
 app.mount("/maya_media", StaticFiles(directory="maya_media"), name="maya_media")
 

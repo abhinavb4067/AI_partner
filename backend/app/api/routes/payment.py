@@ -121,12 +121,17 @@ async def verify_payment(
         
         if not payment:
             raise HTTPException(status_code=404, detail="Payment record not found")
-            
+
+        if payment.status == "success":
+            # Idempotency guard: this payment was already credited once — do
+            # not grant credits/plan again just because /verify was called twice.
+            raise HTTPException(status_code=400, detail="Payment already processed")
+
         payment.status = "success"
         payment.razorpay_payment_id = session_id
-        
+
         plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.id == payment.plan_id).first()
-            
+
     else:
         is_valid = RazorpayService.verify_signature(
             req.razorpay_order_id, req.razorpay_payment_id, req.razorpay_signature
@@ -141,10 +146,13 @@ async def verify_payment(
         
         if not payment:
             raise HTTPException(status_code=404, detail="Payment record not found")
-            
+
+        if payment.status == "success":
+            raise HTTPException(status_code=400, detail="Payment already processed")
+
         payment.status = "success"
         payment.razorpay_payment_id = req.razorpay_payment_id
-        
+
         plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.id == payment.plan_id).first()
 
     if not plan:

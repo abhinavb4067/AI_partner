@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "Avoiga"
     VERSION: str = "2.0.0"
     FRONTEND_URL: str = "http://localhost:5173"
+    ENVIRONMENT: str = "development"  # set to "production" in prod .env
 
     # ── Database ─────────────────────────────────────────────────────────────
     DATABASE_URL: str = "postgresql://postgres:password@localhost:5432/postgres"
@@ -41,6 +42,10 @@ class Settings(BaseSettings):
 
     # ── Payment Gateway Config ───────────────────────────────────────────────
     ACTIVE_PAYMENT_GATEWAY: str = "stripe"  # "stripe" or "razorpay"
+    # Explicit opt-in for local dev without real gateway keys — payments are
+    # mocked as always-successful. Must be False in any real deployment; unlike
+    # the old behavior this is NEVER inferred from what the secret key looks like.
+    PAYMENT_MOCK_MODE: bool = False
 
     # ── Razorpay ─────────────────────────────────────────────────────────────
     RAZORPAY_KEY_ID: str = "rzp_test_DUMMY"
@@ -70,7 +75,17 @@ class Settings(BaseSettings):
 
     @property
     def cors_origins_list(self) -> List[str]:
-        return [o.strip() for o in self.CORS_ORIGINS.split(",")]
+        origins = [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+        # allow_credentials=True (app/main.py) + a wildcard origin together would
+        # let ANY site read cookies/Bearer-token-bearing responses cross-origin —
+        # refuse to boot with that combination rather than silently allow it.
+        if "*" in origins:
+            raise RuntimeError(
+                "CORS_ORIGINS must not contain '*' — the app sends allow_credentials=True, "
+                "so a wildcard origin would allow any website to make authenticated "
+                "cross-origin requests. List explicit frontend origins instead."
+            )
+        return origins
 
     @property
     def characters_folder(self) -> str:

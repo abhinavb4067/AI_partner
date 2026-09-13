@@ -43,6 +43,37 @@ def get_current_user(
     return user
 
 
+def get_current_user_optional(
+    credentials: HTTPAuthorizationCredentials | None = Depends(HTTPBearer(auto_error=False)),
+    db: Session = Depends(get_db),
+) -> UserAccount | None:
+    """Like get_current_user, but returns None instead of raising when no/invalid
+    token is supplied. Used by endpoints that serve public data but personalize
+    it for logged-in callers (never trust a client-supplied user_id instead)."""
+    if not credentials:
+        return None
+    try:
+        payload = decode_token(credentials.credentials)
+    except HTTPException:
+        return None
+
+    if payload.get("type") != "user":
+        return None
+    user_id: str | None = payload.get("sub")
+    if not user_id:
+        return None
+
+    user = db.query(UserAccount).filter((UserAccount.user_id == user_id) | (UserAccount.id == user_id) | (UserAccount.email == user_id)).first()
+    if not user or not user.is_active:
+        return None
+
+    token_sv = payload.get("sv")
+    if token_sv is not None and user.session_version is not None and token_sv != user.session_version:
+        return None
+
+    return user
+
+
 def get_current_admin(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     db: Session = Depends(get_db),

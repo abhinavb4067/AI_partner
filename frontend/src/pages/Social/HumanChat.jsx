@@ -185,14 +185,16 @@ export default function HumanChat() {
     const token = localStorage.getItem('token');
     let wsUrl = '';
     if (import.meta.env.VITE_API_URL) {
-      wsUrl = import.meta.env.VITE_API_URL.replace(/^http/, 'ws') + `/api/ws/chat/${token}`;
+      wsUrl = import.meta.env.VITE_API_URL.replace(/^http/, 'ws') + `/api/ws/chat/connect`;
     } else {
       const loc = window.location;
       const protocol = loc.protocol === 'https:' ? 'wss:' : 'ws:';
-      wsUrl = `${protocol}//${loc.host}/api/ws/chat/${token}`;
+      wsUrl = `${protocol}//${loc.host}/api/ws/chat/connect`;
     }
 
-    ws.current = new WebSocket(wsUrl);
+    // Token rides as the WS subprotocol (not the URL) so it doesn't end up
+    // in proxy access logs or browser history.
+    ws.current = new WebSocket(wsUrl, [token]);
 
     ws.current.onmessage = async (event) => {
       const data = JSON.parse(event.data);

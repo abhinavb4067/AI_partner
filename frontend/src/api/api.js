@@ -6,7 +6,16 @@ const BASE_URL = import.meta.env.VITE_API_URL || '';
 export const getMediaUrl = (url) => {
   if (!url) return null;
   if (url.startsWith('http') || url.startsWith('data:')) return url;
-  return `${BASE_URL || 'https://avoigabackend.ectama.com'}${url}`;
+  const full = `${BASE_URL || 'https://avoigabackend.ectama.com'}${url}`;
+  // AI-companion chat photos (/media/<char>/<user>/<file>) are auth-gated on
+  // the backend now — an <img> tag can't send an Authorization header, so the
+  // token rides along as a query param instead (verified server-side).
+  const segments = url.split('/').filter(Boolean);
+  if (segments[0] === 'media' && segments.length === 4) {
+    const token = localStorage.getItem('token');
+    if (token) return `${full}?token=${encodeURIComponent(token)}`;
+  }
+  return full;
 };
 
 // ── User API instance ──────────────────────────────────────────────────────

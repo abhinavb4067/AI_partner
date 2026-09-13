@@ -21,7 +21,22 @@ import {
 // ── Helpers ────────────────────────────────────────────────────────────────────
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-const resolveMediaUrl = (url) => url && !url.startsWith('http') && !url.startsWith('blob:') ? `${API_BASE}${url}` : url;
+const resolveMediaUrl = (url) => {
+  if (!url || url.startsWith('http') || url.startsWith('blob:')) return url;
+  const full = `${API_BASE}${url}`;
+  // Chat-generated companion photos live at /media/<char>/<user>/<file> and are
+  // now auth-gated server-side (they used to be fully public — anyone could
+  // guess another user's folder and view their private generated photos). A
+  // plain <img> tag can't send an Authorization header, so the token rides
+  // along as a query param instead; the backend still verifies it and checks
+  // the path's user segment matches the token's owner before serving anything.
+  const segments = url.split('/').filter(Boolean); // ["media", char, user, file]
+  if (segments[0] === 'media' && segments.length === 4) {
+    const token = localStorage.getItem('token');
+    if (token) return `${full}?token=${encodeURIComponent(token)}`;
+  }
+  return full;
+};
 
 const ImageMessage = ({ url, onClick }) => {
   const resolvedUrl = resolveMediaUrl(url);
@@ -473,8 +488,9 @@ function Chat() {
     const uid = localStorage.getItem("user_id");
     if (!uid || !charId) return null;
     try {
-      const encodedUserId = encodeURIComponent(uid);
-      const res = await API.get(`/api/chat/history/${encodedUserId}/${charId}`);
+      // Auth (and therefore whose history this is) comes from the Authorization
+      // header the API instance attaches automatically — not from the URL.
+      const res = await API.get(`/api/chat/history/${charId}`);
       const rawHistory = res.data;
 
       // Decrypt and unpack all messages

@@ -1,7 +1,7 @@
 import re
 import json
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models.all_models import Character, CharacterPost, ChatMessage, UserAccount, UserMemory
@@ -11,6 +11,8 @@ from app.services.memory_service import MemoryService
 from app.schemas.chat import ChatRequest
 from app.utils.crypto import encrypt_for_user, is_encrypted_payload
 from app.core.config import settings
+from app.api.deps import get_current_user, get_current_user_optional
+from app.core.limiter import limiter
 
 router = APIRouter()
 
@@ -74,18 +76,18 @@ def clean_ai_reply(raw: str) -> str:
     return raw.strip()
 
 @router.get("/characters")
-async def get_characters(user_id: str = None, db: Session = Depends(get_db)):
+async def get_characters(
+    current_user: UserAccount | None = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
     # Fetch all characters from the database
     characters = db.query(Character).all()
-    
+
     char_list = []
-    
-    # If user_id is provided, try to find the last message for each character
-    user_internal_id = None
-    if user_id:
-        user_acc = db.query(UserAccount).filter(UserAccount.user_id == user_id).first()
-        if user_acc:
-            user_internal_id = user_acc.id
+
+    # Personalize with last-message previews only for the authenticated caller
+    # (never trust a client-supplied user_id — that would leak other users' previews).
+    user_internal_id = current_user.id if current_user else None
 
     for char in characters:
         last_msg = None
@@ -158,23 +160,30 @@ async def get_character_posts(char_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/")
-async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    # 1. Fetch Character and User from DB
-    char = db.query(Character).filter(Character.id == request.char_id).first()
+@limiter.limit("20/minute")
+async def chat(
+    request: Request,
+    body: ChatRequest,
+    background_tasks: BackgroundTasks,
+    current_user: UserAccount = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    # 1. Fetch Character; the calling user comes from the verified JWT only —
+    # body.user_id is never trusted (it used to be, which let anyone chat
+    # as/drain the credits of/generate paid images for any guessed email).
+    char = db.query(Character).filter(Character.id == body.char_id).first()
     if not char:
         raise HTTPException(status_code=404, detail="Character not found")
 
-    user = db.query(UserAccount).filter(UserAccount.user_id == request.user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    user = current_user
 
     # Update user's public key if provided
-    if request.user_public_key and user.e2e_public_key != request.user_public_key:
-        user.e2e_public_key = request.user_public_key
+    if body.user_public_key and user.e2e_public_key != body.user_public_key:
+        user.e2e_public_key = body.user_public_key
         db.commit()
 
     # 1.1 Credit Gating
-    is_photo_request = any(w in request.message.lower() for w in [
+    is_photo_request = any(w in body.message.lower() for w in [
         "photo", "pic", "selfie", "picture", "show me", "send", "nude", 
         "naked", "boobs", "tits", "pussy", "vagina", "ass", "body", "strip", "take off"
     ])
@@ -210,7 +219,7 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
             chat_history.append({"role": role, "content": content})
 
     # 1.7 Handle Proactive Greeting Trigger
-    user_input = request.message
+    user_input = body.message
     is_initial_greeting = user_input == "[GREETING]"
     
     # Strip [AUDIO:...] tag before feeding to AI and Memory
@@ -272,7 +281,7 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
         "photo", "pic", "selfie", "picture", "show me", "send", "nude", 
         "naked", "boobs", "tits", "pussy", "vagina", "ass", "body", "strip", "take off"
     ]
-    is_photo_request = any(w in request.message.lower() for w in photo_keywords)
+    is_photo_request = any(w in body.message.lower() for w in photo_keywords)
 
     # STRICT ENFORCEMENT: If the user didn't ask for a photo, ignore any brackets the AI hallucinated
     if img_desc and not is_photo_request:
@@ -292,7 +301,7 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
         print(f"🖼️ Generating image for: {desc_to_use[:60]}...")
         final_image_url, final_local_path = ImageService.generate_smart_image(
             description=desc_to_use, 
-            user_msg=request.message, 
+            user_msg=body.message, 
             char_dna=char_dna,
             char_name=char.name,
             user_name=user.user_id
@@ -308,18 +317,18 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
     reply = reply.strip()
 
     # Determine encryption target (encryption fully disabled via settings.E2EE_ENABLED)
-    user_pubkey = (request.user_public_key or user.e2e_public_key) if settings.E2EE_ENABLED else None
+    user_pubkey = (body.user_public_key or user.e2e_public_key) if settings.E2EE_ENABLED else None
 
     # 5. Save user message to database (Encrypted at Rest, only if E2EE is enabled)
     if not is_initial_greeting:
         if not settings.E2EE_ENABLED:
-            user_db_content = request.message
-        elif request.encrypted_user_content:
-            user_db_content = request.encrypted_user_content
+            user_db_content = body.message
+        elif body.encrypted_user_content:
+            user_db_content = body.encrypted_user_content
         elif user_pubkey:
-            user_db_content = encrypt_for_user(request.message, user_pubkey)
+            user_db_content = encrypt_for_user(body.message, user_pubkey)
         else:
-            user_db_content = request.message
+            user_db_content = body.message
 
         user_msg = ChatMessage(user_id=user.id, character_id=char.id, sender="user", content=user_db_content)
         db.add(user_msg)
@@ -361,11 +370,19 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
         "is_encrypted": bool(user_pubkey)
     }
 
-@router.get("/history/{user_id_str}/{char_id}")
-async def get_chat_history(user_id_str: str, char_id: str, db: Session = Depends(get_db)):
-    user = db.query(UserAccount).filter(UserAccount.user_id == user_id_str).first()
+@router.get("/history/{char_id}")
+@limiter.limit("60/minute")
+async def get_chat_history(
+    request: Request,
+    char_id: str,
+    current_user: UserAccount = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    # user is always the authenticated caller — never a path/query parameter —
+    # otherwise anyone could read anyone else's chat transcript by guessing an id.
+    user = current_user
     char = db.query(Character).filter(Character.id == char_id).first()
-    if not user or not char:
+    if not char:
         return []
 
     messages = db.query(ChatMessage).filter(
