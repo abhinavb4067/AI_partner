@@ -22,6 +22,8 @@ const PUBLIC_KEY_STORAGE  = 'e2e_public_key';
  * Returns the current user's X25519 keypair from localStorage.
  * Generates and stores a new one if none exists.
  */
+const KEY_JUST_GENERATED_FLAG = 'e2e_key_just_generated';
+
 export function getOrCreateKeyPair() {
   const storedPriv = localStorage.getItem(PRIVATE_KEY_STORAGE);
   const storedPub  = localStorage.getItem(PUBLIC_KEY_STORAGE);
@@ -37,11 +39,36 @@ export function getOrCreateKeyPair() {
     }
   }
 
-  // Generate brand-new X25519 keypair
+  // Generate brand-new X25519 keypair. Any message encrypted under a
+  // previous key becomes permanently undecryptable from this point on,
+  // so flag it for the UI to prompt a backup / warn the user.
   const kp = nacl.box.keyPair();
   localStorage.setItem(PRIVATE_KEY_STORAGE, encodeBase64(kp.secretKey));
   localStorage.setItem(PUBLIC_KEY_STORAGE,  encodeBase64(kp.publicKey));
+  localStorage.setItem(KEY_JUST_GENERATED_FLAG, '1');
   return kp;
+}
+
+/**
+ * Returns true exactly once after a fresh keypair was generated (new device,
+ * cleared storage, corrupted key recovery, etc.), then clears the flag.
+ * Use this to prompt the user to back up their new key.
+ */
+export function consumeKeyJustGeneratedFlag() {
+  const flagged = localStorage.getItem(KEY_JUST_GENERATED_FLAG) === '1';
+  if (flagged) localStorage.removeItem(KEY_JUST_GENERATED_FLAG);
+  return flagged;
+}
+
+/**
+ * True if the user has never downloaded a key backup on this device.
+ */
+export function hasBackedUpKey() {
+  return localStorage.getItem('e2e_key_backed_up') === '1';
+}
+
+export function markKeyBackedUp() {
+  localStorage.setItem('e2e_key_backed_up', '1');
 }
 
 /**

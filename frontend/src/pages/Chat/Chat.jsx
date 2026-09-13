@@ -12,6 +12,9 @@ import {
   encryptForSelf,
   exportKeyBackup,
   isEncrypted,
+  consumeKeyJustGeneratedFlag,
+  hasBackedUpKey,
+  markKeyBackedUp,
 } from "../../utils/crypto";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -141,6 +144,7 @@ const E2EESecurityModal = ({ onClose, myPubKey }) => {
     a.download = `e2ee-keys-backup-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
+    markKeyBackedUp();
   };
 
   return (
@@ -194,6 +198,57 @@ const E2EESecurityModal = ({ onClose, myPubKey }) => {
   );
 };
 
+// ── Key Backup Reminder Modal ─────────────────────────────────────────────────
+const KeyBackupPrompt = ({ onDismiss, onBackedUp }) => {
+  const handleExport = () => {
+    const jsonStr = exportKeyBackup();
+    const blob = new Blob([jsonStr], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `e2ee-keys-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    markKeyBackedUp();
+    onBackedUp();
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100000, backdropFilter: "blur(4px)" }}>
+      <div style={{ background: "#111b21", borderRadius: 20, padding: 28, maxWidth: 420, width: "90%", color: "#e9edef", border: "1px solid rgba(255,152,0,0.35)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+          <div style={{ width: 44, height: 44, borderRadius: "50%", background: "rgba(255,152,0,0.15)", display: "flex", alignItems: "center", justifyContent: "center", color: "#ff9800" }}>
+            <Key size={24} />
+          </div>
+          <div>
+            <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>Back up your encryption key</h3>
+            <p style={{ margin: 0, fontSize: 12, color: "#ff9800" }}>Without it, messages can't be recovered</p>
+          </div>
+        </div>
+        <p style={{ fontSize: 13, color: "#8696a0", lineHeight: "1.6", marginBottom: 20 }}>
+          Your chats are end-to-end encrypted with a key that only exists on this device. If you clear your browser
+          data, switch browsers, or use a different device, this key is lost — and every past message becomes
+          permanently unreadable. Download a backup now so you can restore it later.
+        </p>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button
+            onClick={handleExport}
+            style={{ flex: 1, padding: "10px 14px", background: "#00a884", border: "none", borderRadius: 10, color: "#fff", fontWeight: 600, cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+          >
+            <Download size={16} /> Backup Now
+          </button>
+          <button
+            onClick={onDismiss}
+            style={{ padding: "10px 16px", background: "#202c33", border: "none", borderRadius: 10, color: "#8696a0", fontWeight: 600, cursor: "pointer", fontSize: 13 }}
+          >
+            Later
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ── Main Chat Component ────────────────────────────────────────────────────────
 function Chat() {
   const [message, setMessage] = useState("");
@@ -207,6 +262,7 @@ function Chat() {
   const [premiumModalMsg, setPremiumModalMsg] = useState("");
   const [charVoiceEnabled, setCharVoiceEnabled] = useState(false);
   const [showSecurityModal, setShowSecurityModal] = useState(false);
+  const [showBackupPrompt, setShowBackupPrompt] = useState(false);
   
   // Contact Info states
   const [showContactInfo, setShowContactInfo] = useState(false);
@@ -260,6 +316,14 @@ function Chat() {
       const pubKey = getMyPublicKey();
       setMyPublicKey(pubKey);
       API.post("/api/social/public-key", { public_key: pubKey }).catch(() => {});
+
+      // Prompt for a key backup if a fresh key was just generated (new device,
+      // cleared storage, corrupted-key recovery) or the user has never backed
+      // one up — losing this key makes past/future messages unrecoverable.
+      const freshKey = consumeKeyJustGeneratedFlag();
+      if (freshKey || !hasBackedUpKey()) {
+        setShowBackupPrompt(true);
+      }
     } catch (err) {
       console.error("[E2EE] Key initialization error:", err);
     }
@@ -272,6 +336,12 @@ function Chat() {
 
     if (isEncrypted(rawContent)) {
       decryptedText = decryptChatMessage(rawContent);
+      // decryptChatMessage() falls back to returning the raw ciphertext on failure
+      // (e.g. the local E2EE private key was lost/changed since this was encrypted).
+      // Show a clear notice instead of a garbled base64 blob.
+      if (decryptedText === rawContent) {
+        decryptedText = "🔒 Message unavailable — your encryption key changed on this device";
+      }
     }
 
     const results = [];
@@ -905,9 +975,17 @@ function Chat() {
 
       {/* ── E2EE Security Info Modal ── */}
       {showSecurityModal && (
-        <E2EESecurityModal 
+        <E2EESecurityModal
           onClose={() => setShowSecurityModal(false)}
           myPubKey={myPublicKey}
+        />
+      )}
+
+      {/* ── Key Backup Reminder ── */}
+      {showBackupPrompt && (
+        <KeyBackupPrompt
+          onDismiss={() => setShowBackupPrompt(false)}
+          onBackedUp={() => setShowBackupPrompt(false)}
         />
       )}
     </div>
