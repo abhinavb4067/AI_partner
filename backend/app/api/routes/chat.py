@@ -93,7 +93,7 @@ async def get_characters(user_id: str = None, db: Session = Depends(get_db)):
             last_msg = db.query(ChatMessage).filter(
                 ChatMessage.character_id == char.id,
                 ChatMessage.user_id == user_internal_id
-            ).order_by(ChatMessage.id.desc()).first()
+            ).order_by(ChatMessage.created_at.desc()).first()
         
         # Determine the preview text
         last_message_sender = None
@@ -371,7 +371,7 @@ async def get_chat_history(user_id_str: str, char_id: str, db: Session = Depends
     messages = db.query(ChatMessage).filter(
         ChatMessage.user_id == user.id,
         ChatMessage.character_id == char.id
-    ).order_by(ChatMessage.id.asc()).all()
+    ).order_by(ChatMessage.created_at.asc()).all()
 
     formatted_chat = []
     for msg in messages:
