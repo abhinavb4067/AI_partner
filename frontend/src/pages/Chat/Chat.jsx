@@ -465,53 +465,97 @@ function Chat() {
       .catch(() => {});
   }, []);
 
-  // Fetch & Decrypt chat history
+  // Fetch & decrypt chat history from the server — the source of truth for
+  // what's actually been saved, independent of whatever local state this
+  // browser tab happens to hold (fixes replies going missing after leaving
+  // the chat before the AI finished responding).
+  const fetchHistory = useCallback(async () => {
+    const uid = localStorage.getItem("user_id");
+    if (!uid || !charId) return null;
+    try {
+      const encodedUserId = encodeURIComponent(uid);
+      const res = await API.get(`/api/chat/history/${encodedUserId}/${charId}`);
+      const rawHistory = res.data;
+
+      // Decrypt and unpack all messages
+      const decryptedHistory = [];
+      for (const msg of rawHistory) {
+        const unpacked = unpackAndDecryptMessage(msg);
+        decryptedHistory.push(...unpacked);
+      }
+
+      setChat(decryptedHistory);
+      return decryptedHistory;
+    } catch (err) {
+      console.error("Failed to load chat history:", err);
+      return null;
+    }
+  }, [charId, unpackAndDecryptMessage]);
+
   useEffect(() => {
-    const fetchHistory = async () => {
+    (async () => {
       const uid = localStorage.getItem("user_id");
-      if (uid && charId) {
-        try {
-          const encodedUserId = encodeURIComponent(uid);
-          const res = await API.get(`/api/chat/history/${encodedUserId}/${charId}`);
-          const rawHistory = res.data;
+      const decryptedHistory = await fetchHistory();
+      if (!uid || !decryptedHistory) return;
 
-          // Decrypt and unpack all messages
-          const decryptedHistory = [];
-          for (const msg of rawHistory) {
-            const unpacked = unpackAndDecryptMessage(msg);
-            decryptedHistory.push(...unpacked);
-          }
-
-          setChat(decryptedHistory);
-
-          if (isInitialLoad.current || charId) {
-            isInitialLoad.current = false;
-            let aiConsecutive = 0;
-            for (let i = decryptedHistory.length - 1; i >= 0; i--) {
-              if (decryptedHistory[i].sender === "ai") aiConsecutive++;
-              else break;
-            }
-            if (decryptedHistory.length === 0 && !greetingTriggered.current) {
-              greetingTriggered.current = true;
-              proactiveCount.current = 1;
-              triggerAutoGreeting(uid, "[GREETING]");
-              scheduleFollowUp(uid);
-            } else if (aiConsecutive === 1 && !decryptedHistory.some((m) => m.sender === "user")) {
-              proactiveCount.current = 1;
-              scheduleFollowUp(uid);
-            } else if (aiConsecutive >= 2) {
-              greetingTriggered.current = true;
-              proactiveCount.current = 2;
-              if (followUpTimer.current) clearTimeout(followUpTimer.current);
-            }
-          }
-        } catch (err) {
-          console.error("Failed to load chat history:", err);
+      if (isInitialLoad.current || charId) {
+        isInitialLoad.current = false;
+        let aiConsecutive = 0;
+        for (let i = decryptedHistory.length - 1; i >= 0; i--) {
+          if (decryptedHistory[i].sender === "ai") aiConsecutive++;
+          else break;
+        }
+        if (decryptedHistory.length === 0 && !greetingTriggered.current) {
+          greetingTriggered.current = true;
+          proactiveCount.current = 1;
+          triggerAutoGreeting(uid, "[GREETING]");
+          scheduleFollowUp(uid);
+        } else if (aiConsecutive === 1 && !decryptedHistory.some((m) => m.sender === "user")) {
+          proactiveCount.current = 1;
+          scheduleFollowUp(uid);
+        } else if (aiConsecutive >= 2) {
+          greetingTriggered.current = true;
+          proactiveCount.current = 2;
+          if (followUpTimer.current) clearTimeout(followUpTimer.current);
         }
       }
+
+      // If the last message on record is from the user, an AI reply is still
+      // being generated on the server (e.g. we left the chat mid-reply last
+      // time, or another tab/device is waiting on one). Poll until it lands
+      // instead of leaving the UI stuck without it.
+      if (decryptedHistory.length > 0 && decryptedHistory[decryptedHistory.length - 1].sender === "user") {
+        watchForPendingReply();
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [charId, fetchHistory]);
+
+  // ── Poll history until a pending AI reply shows up ─────────────────────────
+  const pendingReplyPoll = useRef(null);
+  const watchForPendingReply = useCallback(() => {
+    if (pendingReplyPoll.current) return; // already watching
+    let attempts = 0;
+    const MAX_ATTEMPTS = 30; // ~90s, comfortably longer than image generation
+    pendingReplyPoll.current = setInterval(async () => {
+      attempts += 1;
+      const latest = await fetchHistory();
+      const gotReply = latest && latest.length > 0 && latest[latest.length - 1].sender !== "user";
+      if (gotReply || attempts >= MAX_ATTEMPTS) {
+        clearInterval(pendingReplyPoll.current);
+        pendingReplyPoll.current = null;
+      }
+    }, 3000);
+  }, [fetchHistory]);
+
+  useEffect(() => {
+    return () => {
+      if (pendingReplyPoll.current) {
+        clearInterval(pendingReplyPoll.current);
+        pendingReplyPoll.current = null;
+      }
     };
-    fetchHistory();
-  }, [charId, unpackAndDecryptMessage]);
+  }, []);
 
   const scheduleFollowUp = (uid) => {
     if (followUpTimer.current) clearTimeout(followUpTimer.current);
