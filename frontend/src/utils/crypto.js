@@ -123,7 +123,7 @@ export function encryptMessage(plaintext, sharedKey) {
   if (!plaintext || !sharedKey) return null;
   try {
     const nonce      = nacl.randomBytes(nacl.box.nonceLength); // 24 bytes
-    const messageU8  = encodeUTF8(plaintext);
+    const messageU8  = decodeUTF8(plaintext);
     const ciphertext = nacl.box.after(messageU8, nonce, sharedKey);
 
     const combined = new Uint8Array(nonce.length + ciphertext.length);
@@ -155,7 +155,7 @@ export function decryptMessage(encryptedB64, sharedKey) {
     const plaintext  = nacl.box.open.after(ciphertext, nonce, sharedKey);
 
     if (!plaintext) return null; // Authentication failed
-    return decodeUTF8(plaintext);
+    return encodeUTF8(plaintext);
   } catch (e) {
     console.error('[E2EE] Decryption failed:', e);
     return null;
@@ -175,7 +175,7 @@ export function encryptForSelf(plaintext) {
   try {
     const key = getUserStorageKey();
     const nonce = nacl.randomBytes(nacl.secretbox.nonceLength); // 24 bytes
-    const messageU8 = encodeUTF8(plaintext);
+    const messageU8 = decodeUTF8(plaintext);
     const ciphertext = nacl.secretbox(messageU8, nonce, key);
 
     const combined = new Uint8Array(nonce.length + ciphertext.length);
@@ -213,7 +213,7 @@ export function decryptForSelf(encryptedB64) {
       // If decryption fails, it might be plain text that happened to look like base64
       return encryptedB64;
     }
-    return decodeUTF8(plaintext);
+    return encodeUTF8(plaintext);
   } catch {
     return encryptedB64;
   }
@@ -233,7 +233,7 @@ export function encryptWithPublicKey(plaintext, recipientPublicKeyB64) {
     const recipientPubKey = decodeBase64(recipientPublicKeyB64);
     const ephemeralKp = nacl.box.keyPair();
     const nonce = nacl.randomBytes(nacl.box.nonceLength);
-    const messageU8 = encodeUTF8(plaintext);
+    const messageU8 = decodeUTF8(plaintext);
 
     const ciphertext = nacl.box(messageU8, nonce, recipientPubKey, ephemeralKp.secretKey);
 
@@ -270,7 +270,7 @@ export function decryptWithPrivateKey(encryptedB64) {
 
     const plaintext = nacl.box.open(ciphertext, nonce, ephemeralPubKey, myKp.secretKey);
     if (!plaintext) return null;
-    return decodeUTF8(plaintext);
+    return encodeUTF8(plaintext);
   } catch (e) {
     console.error('[E2EE] decryptWithPrivateKey failed:', e);
     return null;
@@ -370,7 +370,7 @@ export function importKeyBackup(backupJson) {
  * Never sent to the server — used only to wrap/unwrap the local private key.
  */
 function deriveWrappingKey(password, email) {
-  const material = encodeUTF8(`${(email || '').toLowerCase().trim()}::e2ee-backup::${password}`);
+  const material = decodeUTF8(`${(email || '').toLowerCase().trim()}::e2ee-backup::${password}`);
   return nacl.hash(material).slice(0, 32); // nacl.hash = SHA-512, take first 32 bytes
 }
 
@@ -390,7 +390,7 @@ export function wrapKeyForServerBackup(password, email) {
   });
 
   const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
-  const ciphertext = nacl.secretbox(encodeUTF8(payload), nonce, wrappingKey);
+  const ciphertext = nacl.secretbox(decodeUTF8(payload), nonce, wrappingKey);
 
   const combined = new Uint8Array(nonce.length + ciphertext.length);
   combined.set(nonce);
@@ -416,7 +416,7 @@ export function restoreKeyFromServerBackup(encryptedBlobB64, password, email) {
     const plaintext = nacl.secretbox.open(ciphertext, nonce, wrappingKey);
     if (!plaintext) return false; // wrong password (e.g. reset since backup) or corrupted
 
-    const data = JSON.parse(decodeUTF8(plaintext));
+    const data = JSON.parse(encodeUTF8(plaintext));
     if (!data.publicKey || !data.secretKey) return false;
 
     localStorage.setItem(PUBLIC_KEY_STORAGE, data.publicKey);

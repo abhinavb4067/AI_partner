@@ -492,11 +492,26 @@ function Chat() {
     }
   }, [charId, unpackAndDecryptMessage]);
 
+  // ── Poll history until a pending AI reply shows up ─────────────────────────
+  // Interval id lives in a ref but its lifetime is tied directly to *this*
+  // effect run (cleared on every re-run, i.e. whenever charId changes, and
+  // on unmount) — never left dangling across character switches or when
+  // navigating away entirely.
+  const pendingReplyPoll = useRef(null);
+  const stopWatchingForPendingReply = useCallback(() => {
+    if (pendingReplyPoll.current) {
+      clearInterval(pendingReplyPoll.current);
+      pendingReplyPoll.current = null;
+    }
+  }, []);
+
   useEffect(() => {
+    let cancelled = false;
+
     (async () => {
       const uid = localStorage.getItem("user_id");
       const decryptedHistory = await fetchHistory();
-      if (!uid || !decryptedHistory) return;
+      if (cancelled || !uid || !decryptedHistory) return;
 
       if (isInitialLoad.current || charId) {
         isInitialLoad.current = false;
@@ -524,38 +539,27 @@ function Chat() {
       // being generated on the server (e.g. we left the chat mid-reply last
       // time, or another tab/device is waiting on one). Poll until it lands
       // instead of leaving the UI stuck without it.
-      if (decryptedHistory.length > 0 && decryptedHistory[decryptedHistory.length - 1].sender === "user") {
-        watchForPendingReply();
+      if (!cancelled && decryptedHistory.length > 0 && decryptedHistory[decryptedHistory.length - 1].sender === "user") {
+        stopWatchingForPendingReply();
+        let attempts = 0;
+        const MAX_ATTEMPTS = 30; // ~90s, comfortably longer than image generation
+        pendingReplyPoll.current = setInterval(async () => {
+          attempts += 1;
+          const latest = await fetchHistory();
+          const gotReply = latest && latest.length > 0 && latest[latest.length - 1].sender !== "user";
+          if (gotReply || attempts >= MAX_ATTEMPTS) {
+            stopWatchingForPendingReply();
+          }
+        }, 3000);
       }
     })();
+
+    return () => {
+      cancelled = true;
+      stopWatchingForPendingReply();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [charId, fetchHistory]);
-
-  // ── Poll history until a pending AI reply shows up ─────────────────────────
-  const pendingReplyPoll = useRef(null);
-  const watchForPendingReply = useCallback(() => {
-    if (pendingReplyPoll.current) return; // already watching
-    let attempts = 0;
-    const MAX_ATTEMPTS = 30; // ~90s, comfortably longer than image generation
-    pendingReplyPoll.current = setInterval(async () => {
-      attempts += 1;
-      const latest = await fetchHistory();
-      const gotReply = latest && latest.length > 0 && latest[latest.length - 1].sender !== "user";
-      if (gotReply || attempts >= MAX_ATTEMPTS) {
-        clearInterval(pendingReplyPoll.current);
-        pendingReplyPoll.current = null;
-      }
-    }, 3000);
-  }, [fetchHistory]);
-
-  useEffect(() => {
-    return () => {
-      if (pendingReplyPoll.current) {
-        clearInterval(pendingReplyPoll.current);
-        pendingReplyPoll.current = null;
-      }
-    };
-  }, []);
 
   const scheduleFollowUp = (uid) => {
     if (followUpTimer.current) clearTimeout(followUpTimer.current);
