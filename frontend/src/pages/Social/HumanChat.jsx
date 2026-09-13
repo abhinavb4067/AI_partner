@@ -27,6 +27,9 @@ export default function HumanChat() {
   const [e2eeReady, setE2eeReady] = useState(false);  // true once key exchange done
   const [peerPublicKey, setPeerPublicKey] = useState(null);
   const [myPublicKey, setMyPublicKey] = useState(null);
+  // Independent on/off switch from settings.HUMAN_CHAT_E2EE_ENABLED — separate
+  // from the AI companion chat's switch.
+  const [e2eeFeatureEnabled, setE2eeFeatureEnabled] = useState(false);
 
   // WebSocket
   const ws = useRef(null);
@@ -121,8 +124,16 @@ export default function HumanChat() {
       content: m.message_type !== 'view_once' ? tryDecrypt(m.content) : m.content,
     })), [tryDecrypt]);
 
+  // ── Step 0: Check server switch for human chat E2EE ──────────────────────
+  useEffect(() => {
+    API.get('/api/social/e2ee-status')
+      .then((r) => setE2eeFeatureEnabled(!!r.data?.enabled))
+      .catch(() => setE2eeFeatureEnabled(false));
+  }, []);
+
   // ── Step 1: Register own public key & fetch peer public key ─────────────────
   useEffect(() => {
+    if (!e2eeFeatureEnabled) return;
     const setupE2EE = async () => {
       try {
         // Ensure keypair exists locally
@@ -153,7 +164,7 @@ export default function HumanChat() {
     };
 
     setupE2EE();
-  }, [targetId]);
+  }, [targetId, e2eeFeatureEnabled]);
 
   // ── Step 2: Load history + WebSocket (after key exchange attempt) ───────────
   useEffect(() => {
@@ -475,22 +486,24 @@ export default function HumanChat() {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0, marginLeft: 10 }}>
-          {/* E2EE badge */}
-          <div 
-            onClick={() => setShowSafetyModal(true)}
-            title={e2eeReady ? 'End-to-end encrypted (Click to verify)' : 'Encryption initializing...'} 
-            style={styles.e2eeBadge(e2eeReady)}
-          >
-            {e2eeReady ? <Lock size={12} /> : <LockOpen size={12} />}
-            <span style={{ fontSize: 10, fontWeight: 600 }}>{e2eeReady ? 'E2EE' : 'Plain'}</span>
-          </div>
+          {/* E2EE badge — only shown when settings.HUMAN_CHAT_E2EE_ENABLED is on */}
+          {e2eeFeatureEnabled && (
+            <div
+              onClick={() => setShowSafetyModal(true)}
+              title={e2eeReady ? 'End-to-end encrypted (Click to verify)' : 'Encryption initializing...'}
+              style={styles.e2eeBadge(e2eeReady)}
+            >
+              {e2eeReady ? <Lock size={12} /> : <LockOpen size={12} />}
+              <span style={{ fontSize: 10, fontWeight: 600 }}>{e2eeReady ? 'E2EE' : 'Plain'}</span>
+            </div>
+          )}
           <button onClick={() => initiateCall(false)} style={styles.iconBtn}><Phone size={20} /></button>
           <button onClick={() => initiateCall(true)} style={styles.iconBtn}><Video size={20} /></button>
         </div>
       </div>
 
       {/* E2EE notice banner */}
-      {e2eeReady && (
+      {e2eeFeatureEnabled && e2eeReady && (
         <div style={styles.encryptedBanner} onClick={() => setShowSafetyModal(true)} role="button">
           <Lock size={12} />
           <span>Messages and calls are end-to-end encrypted. Tap to verify safety numbers.</span>

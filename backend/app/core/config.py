@@ -58,10 +58,12 @@ class Settings(BaseSettings):
     MEDIA_FOLDER: str = "media"
 
     # ── End-to-End Encryption ────────────────────────────────────────────────
-    # Single switch for the whole app. Flip to True to re-enable E2EE for chat
-    # messages/media. When False, messages are stored and served as plain
-    # text and the frontend skips all client-side encrypt/decrypt.
-    E2EE_ENABLED: bool = False
+    # Independent switches — AI companion chat and human-to-human chat each
+    # have their own E2EE toggle so one can be on while the other is off.
+    # Flip to True to re-enable; when False, messages are stored/sent as
+    # plain text and the frontend skips all client-side encrypt/decrypt.
+    E2EE_ENABLED: bool = False              # AI companion chat (app/api/routes/chat.py)
+    HUMAN_CHAT_E2EE_ENABLED: bool = False   # Human-to-human chat (app/api/routes/social.py)
 
     # ── CORS ─────────────────────────────────────────────────────────────────
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000"

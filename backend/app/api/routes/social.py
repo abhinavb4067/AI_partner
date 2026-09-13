@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from fastapi import UploadFile, File
 
 from app.core.database import get_db
+from app.core.config import settings
 from app.models.all_models import UserAccount, HumanSwipe, HumanMatch
 from app.api.deps import get_current_user
 from app.utils.file_upload import save_chat_image
@@ -15,6 +16,14 @@ router = APIRouter()
 class SwipeRequest(BaseModel):
     target_id: str
     is_like: bool
+
+
+@router.get("/e2ee-status")
+async def human_chat_e2ee_status():
+    """Single source of truth for whether human-to-human chat E2EE is on.
+    Toggle it via settings.HUMAN_CHAT_E2EE_ENABLED in app/core/config.py —
+    independent of the AI companion chat's E2EE switch."""
+    return {"enabled": settings.HUMAN_CHAT_E2EE_ENABLED}
 
 @router.get("/discover")
 async def discover_humans(
