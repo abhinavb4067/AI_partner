@@ -11,6 +11,7 @@ import {
   decryptChatMessage,
   encryptForSelf,
   exportKeyBackup,
+  importKeyBackup,
   isEncrypted,
   consumeKeyJustGeneratedFlag,
   hasBackedUpKey,
@@ -126,8 +127,10 @@ const OutOfCreditsModal = ({ onClose, navigate, title, message }) => (
 );
 
 // ── E2EE Security Info Modal ─────────────────────────────────────────────────
-const E2EESecurityModal = ({ onClose, myPubKey }) => {
+const E2EESecurityModal = ({ onClose, myPubKey, onRestore }) => {
   const [copied, setCopied] = useState(false);
+  const [restoreStatus, setRestoreStatus] = useState(null); // null | "ok" | "error"
+  const restoreInputRef = useRef(null);
 
   const handleCopyKey = () => {
     navigator.clipboard.writeText(myPubKey);
@@ -145,6 +148,25 @@ const E2EESecurityModal = ({ onClose, myPubKey }) => {
     a.click();
     URL.revokeObjectURL(url);
     markKeyBackedUp();
+  };
+
+  const handleRestoreFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file later
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const ok = importKeyBackup(text);
+      if (ok) {
+        markKeyBackedUp();
+        setRestoreStatus("ok");
+        onRestore?.();
+      } else {
+        setRestoreStatus("error");
+      }
+    } catch {
+      setRestoreStatus("error");
+    }
   };
 
   return (
@@ -179,7 +201,7 @@ const E2EESecurityModal = ({ onClose, myPubKey }) => {
           </p>
         </div>
 
-        <div style={{ display: "flex", gap: 10 }}>
+        <div style={{ display: "flex", gap: 10, marginBottom: restoreStatus ? 10 : 0 }}>
           <button
             onClick={handleExportKeys}
             style={{ flex: 1, padding: "10px 14px", background: "#00a884", border: "none", borderRadius: 10, color: "#fff", fontWeight: 600, cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
@@ -187,12 +209,35 @@ const E2EESecurityModal = ({ onClose, myPubKey }) => {
             <Download size={16} /> Backup Keys
           </button>
           <button
+            onClick={() => restoreInputRef.current?.click()}
+            style={{ flex: 1, padding: "10px 14px", background: "#202c33", border: "1px solid rgba(0,168,132,0.4)", borderRadius: 10, color: "#00a884", fontWeight: 600, cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+          >
+            <Key size={16} /> Restore Key
+          </button>
+          <input
+            ref={restoreInputRef}
+            type="file"
+            accept="application/json"
+            onChange={handleRestoreFile}
+            style={{ display: "none" }}
+          />
+          <button
             onClick={onClose}
             style={{ padding: "10px 16px", background: "#202c33", border: "none", borderRadius: 10, color: "#8696a0", fontWeight: 600, cursor: "pointer", fontSize: 13 }}
           >
             Got it
           </button>
         </div>
+        {restoreStatus === "ok" && (
+          <p style={{ margin: 0, fontSize: 12, color: "#00a884" }}>
+            ✅ Key restored. Reopen this chat to re-decrypt messages from that key.
+          </p>
+        )}
+        {restoreStatus === "error" && (
+          <p style={{ margin: 0, fontSize: 12, color: "#f15c6d" }}>
+            ❌ Couldn't restore — that file isn't a valid key backup.
+          </p>
+        )}
       </div>
     </div>
   );
@@ -978,6 +1023,7 @@ function Chat() {
         <E2EESecurityModal
           onClose={() => setShowSecurityModal(false)}
           myPubKey={myPublicKey}
+          onRestore={() => window.location.reload()}
         />
       )}
 
