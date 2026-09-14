@@ -183,23 +183,24 @@ async def chat(
         user.e2e_public_key = body.user_public_key
         db.commit()
 
-    # 1.1 Credit Gating
+    # 1.1 Credit Gating — check affordability now, but DON'T deduct yet.
+    # Credits are only taken after we know what actually got delivered (see
+    # step 4 below) — a fal.ai content-policy rejection or any other
+    # generation failure used to still charge the full photo cost for a
+    # photo the user never received. Now: photo requested but generation
+    # fails -> charged the cheaper text-only rate, not the photo rate.
     is_photo_request = any(w in body.message.lower() for w in [
-        "photo", "pic", "selfie", "picture", "show me", "send", "nude", 
+        "photo", "pic", "selfie", "picture", "show me", "send", "nude",
         "naked", "boobs", "tits", "pussy", "vagina", "ass", "body", "strip", "take off"
     ])
     # Recalibrated to actual API cost ratios: an SFW/NSFW photo costs roughly
     # 10-100x what a text reply costs (fal.ai flux-pro/fast-sdxl vs OpenRouter
     # Llama), not the old 5x — that mismatch was subsidizing photo spam.
     credit_cost = 8 if is_photo_request else 1
-    
-    if not user.is_unlimited:
-        if user.credits_remaining < credit_cost:
-            raise HTTPException(status_code=402, detail="out_of_credits")
-        
-        # Deduct credits immediately
-        user.credits_remaining -= credit_cost
-        db.commit()
+    TEXT_ONLY_COST = 1
+
+    if not user.is_unlimited and user.credits_remaining < credit_cost:
+        raise HTTPException(status_code=402, detail="out_of_credits")
 
     # 1.5 Fetch User Memory
     memories_str = MemoryService.get_user_memories_string(db, user.id)
@@ -318,7 +319,19 @@ async def chat(
             user_name=user.user_id,
         )
         print(f"🖼️ Image result: url={final_image_url[:60] if final_image_url else None}, local={final_local_path}")
-        
+
+    # Now that we know whether a requested photo actually came back, charge
+    # accordingly: full photo rate only on confirmed success, otherwise the
+    # cheaper text-only rate (a reply was still delivered either way).
+    image_actually_delivered = bool(final_image_url or final_local_path)
+    actual_cost = credit_cost if (not is_photo_request or image_actually_delivered) else TEXT_ONLY_COST
+    if is_photo_request and not image_actually_delivered:
+        print(f"💳 Photo generation failed — charging text-only rate ({TEXT_ONLY_COST}cr) instead of photo rate ({credit_cost}cr)")
+
+    if not user.is_unlimited:
+        user.credits_remaining -= actual_cost
+        db.commit()
+
     # ALWAYS clean up the reply
     reply = re.sub(r"\[\[.*?\]\]", "", reply, flags=re.DOTALL)
     reply = re.sub(r'\[\s*["\'].*?["\']\s*\]', "", reply, flags=re.DOTALL)
