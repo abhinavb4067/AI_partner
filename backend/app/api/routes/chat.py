@@ -1,5 +1,6 @@
 import re
 import json
+import asyncio
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
 from sqlalchemy.orm import Session
@@ -302,12 +303,19 @@ async def chat(
             "gender": char.gender
         }
         print(f"🖼️ Generating image for: {desc_to_use[:60]}...")
-        final_image_url, final_local_path = ImageService.generate_smart_image(
-            description=desc_to_use, 
-            user_msg=body.message, 
+        # generate_smart_image is synchronous (requests.post to fal.ai, R2
+        # upload, disk I/O) and this server runs a single gunicorn worker —
+        # calling it directly would block the event loop for the whole
+        # request (5-30s), freezing every other user's request meanwhile.
+        # asyncio.to_thread runs it on a worker thread instead, so the loop
+        # stays free to serve everyone else concurrently.
+        final_image_url, final_local_path = await asyncio.to_thread(
+            ImageService.generate_smart_image,
+            description=desc_to_use,
+            user_msg=body.message,
             char_dna=char_dna,
             char_name=char.name,
-            user_name=user.user_id
+            user_name=user.user_id,
         )
         print(f"🖼️ Image result: url={final_image_url[:60] if final_image_url else None}, local={final_local_path}")
         

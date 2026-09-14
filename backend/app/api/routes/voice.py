@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
+import asyncio
 import io
 
 from app.core.database import get_db
@@ -69,35 +70,47 @@ async def transcribe_audio(
     file: UploadFile = File(...),
     current_user: UserAccount = Depends(get_current_user),
 ):
+    try:
+        audio_bytes = await file.read()
+        # ffmpeg conversion (subprocess.run) and Whisper transcription are both
+        # blocking, CPU-bound work — Whisper inference in particular can hold
+        # the CPU for real seconds, not just wait on network I/O. This server
+        # runs a single gunicorn worker, so calling these directly would
+        # freeze every other user's request for the whole duration.
+        # asyncio.to_thread offloads the entire chain to a worker thread.
+        text, mp3_path = await asyncio.to_thread(_convert_and_transcribe, audio_bytes)
+        return {"text": text, "audio_url": f"/{mp3_path}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+
+
+def _convert_and_transcribe(audio_bytes: bytes) -> tuple[str, str]:
+    """Runs on a worker thread (see asyncio.to_thread call above) — keep this
+    synchronous, it must not be awaited directly from the route."""
     from app.services.stt_service import STTService
     import os
     import uuid
     import tempfile
     import subprocess
     import imageio_ffmpeg
+
+    os.makedirs("media/voice_notes", exist_ok=True)
+    base_name = uuid.uuid4().hex
+    mp3_filename = f"{base_name}.mp3"
+    mp3_path = f"media/voice_notes/{mp3_filename}"
+
+    with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as temp_audio:
+        temp_audio.write(audio_bytes)
+        temp_webm = temp_audio.name
+
     try:
-        audio_bytes = await file.read()
-        
-        # Save audio file permanently
-        os.makedirs("media/voice_notes", exist_ok=True)
-        base_name = uuid.uuid4().hex
-        mp3_filename = f"{base_name}.mp3"
-        mp3_path = f"media/voice_notes/{mp3_filename}"
-        
-        with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as temp_audio:
-            temp_audio.write(audio_bytes)
-            temp_webm = temp_audio.name
-            
-        try:
-            ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-            # Convert WebM to MP3 at 128k bit rate. This ensures correct duration metadata.
-            subprocess.run([ffmpeg_exe, "-y", "-i", temp_webm, "-vn", "-ab", "128k", mp3_path], 
-                           check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        finally:
-            if os.path.exists(temp_webm):
-                os.remove(temp_webm)
-            
-        text = STTService.transcribe(audio_bytes)
-        return {"text": text, "audio_url": f"/{mp3_path}"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+        # Convert WebM to MP3 at 128k bit rate. This ensures correct duration metadata.
+        subprocess.run([ffmpeg_exe, "-y", "-i", temp_webm, "-vn", "-ab", "128k", mp3_path],
+                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    finally:
+        if os.path.exists(temp_webm):
+            os.remove(temp_webm)
+
+    text = STTService.transcribe(audio_bytes)
+    return text, mp3_path
