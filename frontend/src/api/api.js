@@ -51,6 +51,23 @@ export const broadcastAuthEvent = (type, data = {}) => {
   }
 };
 
+// Single source of truth for clearing a logged-in session. Login.jsx sets
+// 'token'/'user_id'/'user_name'/'user_info' — any logout path (manual button,
+// forced 401, multi-tab sync) must clear exactly these, or the session
+// silently survives. This used to be duplicated ad-hoc at each call site;
+// one of those copies (Profile.jsx's "Log Out" button) cleared a
+// non-existent 'user_token' key instead of 'token' by mistake, so clicking
+// Log Out never actually cleared the auth token — the "logged out" user
+// stayed fully authenticated for any subsequent API call/page load.
+export const clearSession = () => {
+  localStorage.removeItem('token');
+  localStorage.removeItem('user_id');
+  localStorage.removeItem('user_name');
+  localStorage.removeItem('user_info');
+  localStorage.removeItem('user'); // legacy key, harmless if already absent
+  idbClearToken();
+};
+
 API.interceptors.response.use(
   (res) => res,
   (error) => {
@@ -59,9 +76,7 @@ API.interceptors.response.use(
       if (!isLoginOrRegister) {
         const detail = error.response?.data?.detail || '';
         const isSessionExpired = detail.toLowerCase().includes('session') || detail.toLowerCase().includes('expired');
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        idbClearToken();
+        clearSession();
         broadcastAuthEvent('SESSION_TERMINATED', { reason: 'session_expired' });
         window.location.href = isSessionExpired ? '/login?session_expired=true' : '/login';
       }

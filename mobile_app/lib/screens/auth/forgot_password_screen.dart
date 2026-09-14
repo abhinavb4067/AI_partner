@@ -16,6 +16,12 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   bool _loading = false;
   String? _error;
 
+  @override
+  void dispose() {
+    _email.dispose();
+    super.dispose();
+  }
+
   Future<void> _submit() async {
     if (!_email.text.contains('@')) {
       setState(() => _error = 'Enter a valid email');

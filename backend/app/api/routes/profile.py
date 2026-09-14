@@ -175,6 +175,18 @@ async def update_fcm_token(
     return {"message": "FCM token updated successfully"}
 
 
+@router.delete("/fcm-token")
+async def clear_fcm_token(
+    current_user: UserAccount = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Called on logout so a shared/resold device stops receiving this
+    account's push notifications once the user has signed out."""
+    current_user.fcm_token = None
+    db.commit()
+    return {"message": "FCM token cleared"}
+
+
 @router.post("/test-push")
 async def test_push(
     current_user: UserAccount = Depends(get_current_user),

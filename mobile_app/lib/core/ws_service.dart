@@ -1,13 +1,18 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:web_socket_channel/io.dart';
 import 'env.dart';
 import 'session.dart';
 
 /// The single persistent WebSocket connection used for human-to-human chat
 /// (text/image/read-receipts) *and* WebRTC call signaling — mirrors the web
 /// app's `GlobalCallManager` + `HumanChat` socket usage, which both share one
-/// connection to `/api/ws/chat/{token}`.
+/// connection to `/api/ws/chat/connect`, authenticated via the WS
+/// subprotocol rather than the URL path — the backend's `/{token}` path
+/// route is explicitly deprecated (kept one release for old clients only;
+/// see backend/app/api/routes/ws_chat.py) precisely because a token in the
+/// URL ends up in proxy/server access logs.
 class WsService {
   WsService._();
   static final WsService instance = WsService._();
@@ -34,10 +39,11 @@ class WsService {
     if (token == null || token.isEmpty) return;
 
     final wsBase = Env.apiBaseUrl.replaceFirst('https://', 'wss://').replaceFirst('http://', 'ws://');
-    final uri = Uri.parse('$wsBase/api/ws/chat/$token');
+    final uri = Uri.parse('$wsBase/api/ws/chat/connect');
 
     try {
-      _channel = WebSocketChannel.connect(uri);
+      // Token rides as the WS subprotocol, not the URL — see class doc above.
+      _channel = IOWebSocketChannel.connect(uri, protocols: [token]);
       _sub = _channel!.stream.listen(
         (event) {
           try {

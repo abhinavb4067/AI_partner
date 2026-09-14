@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import brand from './config/brand';
-import { authChannel } from './api/api';
+import { authChannel, clearSession } from './api/api';
 
 // Public pages
 import Home from './pages/Home';
@@ -15,6 +15,7 @@ import ResetPassword from './pages/ResetPassword';
 // User pages (protected)
 import CharacterSelection from './pages/CharacterSelection';
 import Chat from './pages/Chat/Chat';
+import Story from './pages/Story/Story';
 import Profile from './pages/Profile';
 import Discover from './pages/Social/Discover';
 import Matches from './pages/Social/Matches';
@@ -57,8 +58,7 @@ function GlobalAuthSync() {
       if (e.data?.type === 'SESSION_TERMINATED') {
         const currentPath = window.location.pathname;
         if (!currentPath.includes('/login') && !currentPath.includes('/register')) {
-          localStorage.removeItem('token');
-          localStorage.removeItem('user');
+          clearSession();
           window.location.href = '/login?session_expired=true';
         }
       } else if (e.data?.type === 'NEW_LOGIN') {
@@ -105,6 +105,7 @@ function App() {
         {/* ── User (protected) ── */}
         <Route path="/select-character" element={<ProtectedRoute><CharacterSelection /></ProtectedRoute>} />
         <Route path="/chat/:charId" element={<ProtectedRoute><Chat /></ProtectedRoute>} />
+        <Route path="/story/:charId" element={<ProtectedRoute><Story /></ProtectedRoute>} />
         <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
         <Route path="/discover" element={<ProtectedRoute><Discover /></ProtectedRoute>} />
         <Route path="/matches" element={<ProtectedRoute><Matches /></ProtectedRoute>} />

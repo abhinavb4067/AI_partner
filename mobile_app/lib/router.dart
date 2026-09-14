@@ -7,6 +7,7 @@ import 'screens/auth/register_screen.dart';
 import 'screens/auth/reset_password_screen.dart';
 import 'screens/calls/call_screen.dart';
 import 'screens/chat/chat_screen.dart';
+import 'screens/chat/story_screen.dart';
 import 'screens/home/character_list_screen.dart';
 import 'screens/pricing/payment_webview_screen.dart';
 import 'screens/pricing/pricing_screen.dart';
@@ -47,6 +48,10 @@ final appRouter = GoRouter(
         charId: state.pathParameters['charId']!,
         character: state.extra as CharacterSummary?,
       ),
+    ),
+    GoRoute(
+      path: '/story/:charId',
+      builder: (context, state) => StoryScreen(charId: state.pathParameters['charId']!),
     ),
     GoRoute(path: '/profile', builder: (context, state) => const ProfileScreen()),
     GoRoute(path: '/pricing', builder: (context, state) => const PricingScreen()),

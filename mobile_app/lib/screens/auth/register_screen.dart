@@ -39,6 +39,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
   void dispose() {
     _cooldownTimer?.cancel();
     _expiryTimer?.cancel();
+    _name.dispose();
+    _username.dispose();
+    _email.dispose();
+    _age.dispose();
+    _password.dispose();
+    _confirm.dispose();
+    _otp.dispose();
     super.dispose();
   }
 

@@ -21,6 +21,13 @@ class _LoginScreenState extends State<LoginScreen> {
   String? _error;
   bool _obscure = true;
 
+  @override
+  void dispose() {
+    _email.dispose();
+    _password.dispose();
+    super.dispose();
+  }
+
   Future<void> _handleGoogleSignIn() async {
     setState(() {
       _googleLoading = true;

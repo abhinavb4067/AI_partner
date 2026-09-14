@@ -4,6 +4,7 @@ import '../../core/api_client.dart';
 import '../../core/env.dart';
 import '../../core/session.dart';
 import '../../core/theme.dart';
+import '../../services/google_auth_service.dart';
 import '../../services/profile_service.dart';
 import '../../widgets/gradient_avatar.dart';
 
@@ -41,6 +42,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _logout() async {
+    // Best-effort: also end the native Google session so the account picker
+    // doesn't silently re-auth the same account next time. Session logout
+    // (clearing the app's own token) must still happen even if this fails.
+    try {
+      await GoogleAuthService.signOut();
+    } catch (_) {
+      // Ignore — user may not have signed in via Google, or Play Services
+      // may be unavailable; either way it shouldn't block logging out.
+    }
     await Session.instance.logout();
     if (mounted) context.go('/login');
   }

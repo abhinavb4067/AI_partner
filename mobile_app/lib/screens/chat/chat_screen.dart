@@ -219,6 +219,13 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ],
         ),
+        actions: [
+          IconButton(
+            tooltip: 'Our Story',
+            icon: const Text('📖', style: TextStyle(fontSize: 20)),
+            onPressed: () => context.push('/story/${widget.charId}'),
+          ),
+        ],
       ),
       body: Column(
         children: [

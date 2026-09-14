@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import API, { getMediaUrl } from '../api/api';
+import API, { getMediaUrl, clearSession, broadcastAuthEvent } from '../api/api';
 import { X } from 'lucide-react';
 
 const TABS = ['My Profile', 'Change Password', 'Subscription', 'Danger Zone'];
@@ -51,13 +51,14 @@ export default function Profile() {
             }}>{t}</button>
           ))}
           <div style={{ marginTop: 24, marginBottom: 8, borderTop: '1px solid rgba(255,255,255,0.06)' }} />
-          <button 
+          <button
             onClick={() => {
-              localStorage.removeItem('user_token');
-              localStorage.removeItem('user_info');
-              localStorage.removeItem('user_name');
+              // Was clearing a non-existent 'user_token' key instead of the
+              // real 'token' key — the session was never actually cleared.
+              clearSession();
+              broadcastAuthEvent('SESSION_TERMINATED', { reason: 'logout' });
               navigate('/login');
-            }} 
+            }}
             style={{
               padding: '11px 16px', textAlign: 'left', background: 'none', border: 'none',
               borderRadius: 10, color: '#ef5350', cursor: 'pointer', fontSize: 14, fontWeight: 500,

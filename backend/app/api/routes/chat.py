@@ -470,10 +470,137 @@ async def get_chat_history(
                 })
             if image_url:
                 formatted_chat.append({
-                    "sender": "ai", 
-                    "type": "image", 
+                    "sender": "ai",
+                    "type": "image",
                     "url": image_url,
                     "time": msg_time
                 })
-                
+
     return formatted_chat
+
+
+# ── "Our Story" — relationship timeline ────────────────────────────────────
+# A feature genuinely uncommon in this product category: most AI-companion
+# apps only ever show you the raw chat log. This turns the same data every
+# such app already has (ChatMessage timestamps, UserMemory facts) into a
+# living relationship timeline — a day counter, a growing "relationship
+# stage", milestone cards (first message, first photo, message-count
+# badges), and a visible list of everything she remembers about you. Nothing
+# here required a new paid API or third-party service — it's a presentation
+# layer over data the app was already storing, which is exactly why it's
+# cheap to ship tonight and costs nothing extra to run.
+#
+# Product intent: this is a loss-aversion / attachment hook by design — once
+# someone has a 30-day streak and a page full of milestones with a
+# character, "starting over" (letting the subscription lapse, or losing
+# history) has real emotional weight in a way a bare chat log never builds.
+# That's the subscription-retention lever this is meant to pull.
+
+_STAGE_THRESHOLDS = [
+    (0, "Just Met", "🌱"),
+    (3, "Getting Curious", "👀"),
+    (7, "Growing Close", "💫"),
+    (14, "Inseparable", "🔥"),
+    (30, "Deeply Bonded", "💞"),
+    (60, "Soulmates", "💍"),
+    (180, "Forever", "♾️"),
+]
+
+_MESSAGE_COUNT_MILESTONES = [10, 50, 100, 500, 1000, 5000]
+
+
+def _compute_stage(days_together: int) -> dict:
+    stage = _STAGE_THRESHOLDS[0]
+    for threshold, label, icon in _STAGE_THRESHOLDS:
+        if days_together >= threshold:
+            stage = (threshold, label, icon)
+    _, label, icon = stage
+    # Progress toward the *next* stage, for a progress bar on the frontend.
+    next_stage = next((s for s in _STAGE_THRESHOLDS if s[0] > stage[0]), None)
+    if next_stage:
+        span = next_stage[0] - stage[0]
+        progress = min(1.0, (days_together - stage[0]) / span) if span else 1.0
+    else:
+        progress = 1.0
+    return {
+        "label": label,
+        "icon": icon,
+        "next_label": next_stage[1] if next_stage else None,
+        "days_to_next": max(0, next_stage[0] - days_together) if next_stage else 0,
+        "progress": round(progress, 3),
+    }
+
+
+@router.get("/story/{char_id}")
+@limiter.limit("30/minute")
+async def get_relationship_story(
+    request: Request,
+    char_id: str,
+    current_user: UserAccount = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    char = db.query(Character).filter(Character.id == char_id).first()
+    if not char:
+        raise HTTPException(status_code=404, detail="Character not found")
+
+    messages = db.query(ChatMessage).filter(
+        ChatMessage.user_id == current_user.id,
+        ChatMessage.character_id == char_id
+    ).order_by(ChatMessage.created_at.asc()).all()
+
+    # Real conversation only — the [GREETING]-triggered opener and any
+    # encrypted payload (E2EE, currently off globally, but future-proof)
+    # don't count toward "you two started talking".
+    real_messages = [m for m in messages if not is_encrypted_payload(m.content)]
+
+    if not real_messages:
+        return {"started": False, "character_name": char.name}
+
+    first_at = real_messages[0].created_at
+    now = datetime.utcnow()
+    days_together = (now.date() - first_at.date()).days + 1
+    total_messages = len(real_messages)
+    active_days = len({m.created_at.date() for m in real_messages})
+
+    milestones = [{
+        "date": first_at.isoformat(),
+        "icon": "🌱",
+        "title": f"You and {char.name} started talking",
+    }]
+
+    for threshold in _MESSAGE_COUNT_MILESTONES:
+        if total_messages >= threshold:
+            milestones.append({
+                "date": real_messages[threshold - 1].created_at.isoformat(),
+                "icon": "💬",
+                "title": f"{threshold:,} messages exchanged",
+            })
+
+    first_photo = next((m for m in real_messages if "[IMAGE:" in m.content), None)
+    if first_photo:
+        milestones.append({
+            "date": first_photo.created_at.isoformat(),
+            "icon": "📸",
+            "title": f"{char.name} sent you your first photo",
+        })
+
+    milestones.sort(key=lambda m: m["date"])
+
+    # "Things she remembers about you" — reuses the existing UserMemory table
+    # (already populated by MemoryService in the background after every
+    # exchange, see chat() above) rather than anything new.
+    memories = db.query(UserMemory).filter(UserMemory.user_id == current_user.id).all()
+
+    return {
+        "started": True,
+        "character_name": char.name,
+        "character_photo": char.photo_url,
+        "first_message_at": first_at.isoformat(),
+        "days_together": days_together,
+        "active_days": active_days,
+        "total_messages": total_messages,
+        "photos_shared": sum(1 for m in real_messages if "[IMAGE:" in m.content),
+        "stage": _compute_stage(days_together),
+        "milestones": milestones,
+        "memories": [{"key": m.key, "value": m.value} for m in memories if m.value],
+    }

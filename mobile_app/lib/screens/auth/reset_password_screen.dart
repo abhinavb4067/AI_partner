@@ -19,6 +19,14 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
   bool _loading = false;
   String? _error;
 
+  @override
+  void dispose() {
+    _otp.dispose();
+    _password.dispose();
+    _confirm.dispose();
+    super.dispose();
+  }
+
   Future<void> _submit() async {
     if (_otp.text.trim().length != 6) {
       setState(() => _error = 'Enter the 6-digit code');

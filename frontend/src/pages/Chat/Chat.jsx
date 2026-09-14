@@ -804,6 +804,18 @@ function Chat() {
             </div>
           </div>
 
+          {/* "Our Story" entry point — the relationship timeline feature */}
+          <button
+            onClick={() => navigate(`/story/${charId}`)}
+            title="Our Story"
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer', fontSize: 20,
+              padding: '4px 8px', display: 'flex', alignItems: 'center', flexShrink: 0,
+            }}
+          >
+            📖
+          </button>
+
           {/* E2EE Active Security Badge — only shown when settings.E2EE_ENABLED is on */}
           {e2eeEnabled && (
             <div

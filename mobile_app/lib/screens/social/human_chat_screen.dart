@@ -172,6 +172,8 @@ class _HumanChatScreenState extends State<HumanChatScreen> {
   @override
   void dispose() {
     _wsSub?.cancel();
+    _controller.dispose();
+    _scroll.dispose();
     super.dispose();
   }
 
