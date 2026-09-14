@@ -444,3 +444,56 @@ is committed to git (main, commit 73eefb3) AND deployed live on the server
    all mobile_app review/fixes tonight were manual reads + the IDE's Dart
    analyzer (via VSCode diagnostics), never an actual `flutter analyze` or
    build. Real build verification is still outstanding.
+
+--- ITEMS 4 AND 5 ABOVE: DONE (later in the same overnight session) ---
+4. FCM token cleanup -- DONE. api.js's clearSession() and mobile's
+   profile_screen.dart _logout() both now call DELETE /api/profile/
+   fcm-token before clearing the session (best-effort, never blocks
+   logout). Verified live against the real endpoint.
+5. payment_webview_screen.dart's mobile_token/mobile_uid bridge -- DONE.
+   Implemented in frontend/src/main.jsx (has to run before React's first
+   render, not in a useEffect -- Pricing.jsx reads localStorage
+   synchronously during render for isLoggedIn, so a post-mount effect
+   wouldn't reach it in time without a reload). Updated the Dart screen's
+   doc comment to match. Verified the route still loads with the query
+   params present.
+
+--- ALSO DONE (extra safety item, not on any prior list) ---
+- Added a hard daily cap (30/user/day) on fal.ai photo generations,
+  independent of credits/plan. This is the mitigation for the flux-pro-
+  ultra cost tail-risk flagged twice earlier today (item 3 above still
+  technically open in the sense that flux-pro-ultra is still the SFW
+  default model -- that part wasn't changed -- but the *unbounded blast
+  radius* from a high-credit/scripted account is now capped regardless of
+  which model gets used, which was the actually dangerous part). See
+  DAILY_PHOTO_CAP in backend/app/api/routes/chat.py.
+
+=== FINAL STATE AS OF STOPPING (2026-09-14, overnight session end) ===
+Every change described in both of today's sections is committed to git
+(main, HEAD = a332a6d "Implement the mobile checkout auto-login bridge")
+AND deployed live on the server -- backend restarted clean each time,
+frontend rebuilt and nginx restarted each time, spot-verified against the
+real server after each deploy (not just "should work"). Nothing is sitting
+half-finished, uncommitted, or undeployed. Safe to close for the night.
+
+=== NEXT STEPS FOR TOMORROW (carried forward, still open) ===
+1. ModelsLab NSFW image-gen subscription -- decision + purchase still
+   pending (₹1,750/mo, 24h refund window if it doesn't work -- see
+   research earlier in today's log).
+2. Droplet upgrade decision -- still pending (current 1vCPU/512MB
+   ~Rs600/mo vs ~Rs1800-2000/mo for 2vCPU/4GB).
+3. flux-pro-ultra is still the default SFW image model (~Rs5/photo) --
+   the daily cap added tonight bounds the blast radius but doesn't reduce
+   the per-photo cost itself. Consider switching SFW default to something
+   cheaper too, if margins matter more than SFW photo quality.
+4. Flutter SDK still not installed/verified anywhere -- real `flutter
+   analyze`/build has never been run on this codebase, including on all of
+   today's mobile_app changes (WsService, ChatService, StoryScreen, the 6
+   dispose() fixes, profile_screen.dart's FCM+Google signout calls). High
+   value next step: get Flutter installed somewhere and actually build it.
+5. Whether to gate any part of "Our Story" behind subscription tier --
+   open product decision, not made yet.
+6. Mobile app has still never been through a real device/emulator test run
+   of anything built today -- the Story screen, the WS subprotocol switch,
+   the mobile checkout bridge. All reviewed by reading code + IDE
+   diagnostics only, same caveat as item 4.
