@@ -42,6 +42,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _logout() async {
+    // Best-effort: tell the backend to forget this device's push token
+    // first, while Session.instance.token is still set (ApiClient's
+    // interceptor attaches it automatically) — so a shared/resold device
+    // stops receiving this account's notifications after logout.
+    try {
+      await ApiClient.instance.dio.delete('/api/profile/fcm-token');
+    } catch (_) {
+      // Ignore — logout must proceed either way.
+    }
     // Best-effort: also end the native Google session so the account picker
     // doesn't silently re-auth the same account next time. Session logout
     // (clearing the app's own token) must still happen even if this fails.

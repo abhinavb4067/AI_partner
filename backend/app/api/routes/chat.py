@@ -17,6 +17,13 @@ from app.core.limiter import limiter
 
 router = APIRouter()
 
+# Hard ceiling on fal.ai photo generations per user per day, independent of
+# credits/plan — bounds worst-case cost exposure regardless of how many
+# credits a user holds (a high-credit plan or a scripted/compromised account
+# could otherwise burst far more image-gen calls than any realistic human
+# would in a day). See the daily-cap check in chat() below.
+DAILY_PHOTO_CAP = 30
+
 
 @router.get("/e2ee-status")
 async def e2ee_status():
@@ -297,28 +304,50 @@ async def chat(
 
     # 4. Generate Image if needed
     if img_desc or is_photo_request:
-        desc_to_use = img_desc if img_desc else f"{char.name} posing in a luxury penthouse"
-        char_dna = {
-            "identity": char.identity_dna, 
-            "body": char.body_dna,
-            "gender": char.gender
-        }
-        print(f"🖼️ Generating image for: {desc_to_use[:60]}...")
-        # generate_smart_image is synchronous (requests.post to fal.ai, R2
-        # upload, disk I/O) and this server runs a single gunicorn worker —
-        # calling it directly would block the event loop for the whole
-        # request (5-30s), freezing every other user's request meanwhile.
-        # asyncio.to_thread runs it on a worker thread instead, so the loop
-        # stays free to serve everyone else concurrently.
-        final_image_url, final_local_path = await asyncio.to_thread(
-            ImageService.generate_smart_image,
-            description=desc_to_use,
-            user_msg=body.message,
-            char_dna=char_dna,
-            char_name=char.name,
-            user_name=user.user_id,
-        )
-        print(f"🖼️ Image result: url={final_image_url[:60] if final_image_url else None}, local={final_local_path}")
+        # Hard daily cap on photo generations per user, independent of
+        # credits/plan. Credits alone don't bound worst-case cost — a
+        # high-credit (e.g. Elite) plan or a compromised/scripted account
+        # could otherwise burst hundreds of fal.ai calls in a short window
+        # before anyone notices. This caps that blast radius: at
+        # DAILY_PHOTO_CAP=30, worst case is ~30 x the per-photo cost per
+        # user per day (~₹150/day even at flux-pro-ultra's ₹5/photo),
+        # regardless of how many credits they hold.
+        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        photos_today = db.query(ChatMessage).filter(
+            ChatMessage.user_id == user.id,
+            ChatMessage.sender == "assistant",
+            ChatMessage.created_at >= today_start,
+            ChatMessage.content.contains("[IMAGE:"),
+        ).count()
+
+        if photos_today >= DAILY_PHOTO_CAP:
+            print(f"🚫 Daily photo cap reached for user {user.id} ({photos_today}/{DAILY_PHOTO_CAP}) — skipping generation")
+            # Falls through with final_image_url/final_local_path left None;
+            # the existing "only charge on success" logic below already
+            # charges the cheaper text-only rate in this case.
+        else:
+            desc_to_use = img_desc if img_desc else f"{char.name} posing in a luxury penthouse"
+            char_dna = {
+                "identity": char.identity_dna,
+                "body": char.body_dna,
+                "gender": char.gender
+            }
+            print(f"🖼️ Generating image for: {desc_to_use[:60]}...")
+            # generate_smart_image is synchronous (requests.post to fal.ai, R2
+            # upload, disk I/O) and this server runs a single gunicorn worker —
+            # calling it directly would block the event loop for the whole
+            # request (5-30s), freezing every other user's request meanwhile.
+            # asyncio.to_thread runs it on a worker thread instead, so the loop
+            # stays free to serve everyone else concurrently.
+            final_image_url, final_local_path = await asyncio.to_thread(
+                ImageService.generate_smart_image,
+                description=desc_to_use,
+                user_msg=body.message,
+                char_dna=char_dna,
+                char_name=char.name,
+                user_name=user.user_id,
+            )
+            print(f"🖼️ Image result: url={final_image_url[:60] if final_image_url else None}, local={final_local_path}")
 
     # Now that we know whether a requested photo actually came back, charge
     # accordingly: full photo rate only on confirmed success, otherwise the

@@ -60,6 +60,20 @@ export const broadcastAuthEvent = (type, data = {}) => {
 // Log Out never actually cleared the auth token — the "logged out" user
 // stayed fully authenticated for any subsequent API call/page load.
 export const clearSession = () => {
+  // Best-effort: tell the backend to forget this device's push token so a
+  // shared/resold device (or just anyone with physical access after you
+  // leave) stops receiving your notifications post-logout. Fired with the
+  // token captured *before* it's removed, via a bare axios call (not the
+  // shared `API` instance) so a failure here can't re-trigger the 401
+  // interceptor above and loop back into clearSession() again. Never
+  // awaited — logout must not be delayed by this.
+  const outgoingToken = localStorage.getItem('token');
+  if (outgoingToken) {
+    axios.delete(`${BASE_URL}/api/profile/fcm-token`, {
+      headers: { Authorization: `Bearer ${outgoingToken}` },
+    }).catch(() => {});
+  }
+
   localStorage.removeItem('token');
   localStorage.removeItem('user_id');
   localStorage.removeItem('user_name');
