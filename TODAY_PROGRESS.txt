@@ -200,3 +200,119 @@ root@165.22.11.170. App lives at /var/www/AI_partner (git remote:
 github.com/abhinavb4067/AI_partner, branch main — server is in sync with it
 as of the end of today's session). Backend service: `systemctl restart
 fastapi`. Frontend: `cd frontend && npm run build && systemctl restart nginx`.
+
+
+================================================================================
+Date: 2026-09-14
+================================================================================
+
+=== WHAT WAS DONE TODAY ===
+Continued from yesterday's "NOT YET DONE" list: fixed the async blocking-call
+issue, then went deep on why NSFW image generation still doesn't work even
+after yesterday's fal.ai fast-sdxl routing fix. Everything below is committed
+to git (main) AND deployed live on the server.
+
+--- 1. ASYNC BLOCKING-CALL FIX (implemented, deployed, verified live) ---
+  - chat.py: ImageService.generate_smart_image() (sync requests.post to
+    fal.ai + R2 upload + disk I/O) is now called via `await
+    asyncio.to_thread(...)` instead of directly — was freezing the ENTIRE
+    server (single gunicorn worker, -w 1) for every other user during the
+    5-30s a photo request takes.
+  - voice.py: /transcribe's blocking ffmpeg subprocess.run() + local Whisper
+    CPU inference (STTService.transcribe) factored into a new
+    _convert_and_transcribe() helper, also run via asyncio.to_thread.
+  - Verified LIVE with a real test: fired a real chat+photo request, hammered
+    /api/health in parallel — health checks stayed at a steady ~0.9-1.2s
+    throughout the ~4s chat request (no freeze). Confirmed via server logs
+    that the image-gen code path was actually exercised during the test.
+  - text chat (ai_service.py) and TTS (voice_service.py) were already
+    properly async via httpx.AsyncClient — no changes needed there.
+
+--- 2. BONUS FIX: server logs were completely invisible (found while testing #1) ---
+  - /etc/systemd/system/fastapi.service had no PYTHONUNBUFFERED=1, so all
+    print() output sat in a buffer and never reached `journalctl` — a
+    previous test run showed literally zero log lines despite a real,
+    successful request completing. Added
+    `Environment="PYTHONUNBUFFERED=1"` to the service file directly on the
+    server (backed up original to /root/nginx_backups/fastapi.service.bak-*
+    first), daemon-reload + restart. Logs work correctly now — this is how
+    finding #3 below was even possible to diagnose.
+
+--- 3. NSFW IMAGE GENERATION: root cause found, provider research done, NOT YET FIXED ---
+  With logs now working, caught the real failure live: fal.ai's fast-sdxl
+  (yesterday's fix) returns HTTP 422 content_policy_violation on NSFW
+  prompts. Checked fal.ai's own docs (fal.ai/docs/errors): NSFW is
+  EXPLICITLY listed as a policy-violation trigger, marked non-retryable, no
+  account setting/parameter/alternate endpoint can disable it. This is a
+  hard platform-wide ban, not a bug -- fal.ai categorically cannot be used
+  for NSFW generation, full stop.
+
+  User does NOT want fal.ai removed (already paid ~Rs1000 for a
+  subscription) -- keep it for SFW image generation only, find a separate
+  provider for NSFW.
+
+  Research done (checked each provider's ACTUAL policy docs, not just
+  marketing, after confirming fal.ai's marketing was misleading):
+    - Novita AI: looked promising (cheap $0.0015/img, true pay-as-you-go,
+      "optional NSFW detection" language suggested no blanket ban) BUT their
+      Acceptable Use Policy Section 5(7) explicitly states content that "is
+      sexually explicit" is prohibited, no carve-out for consenting adults.
+      Confirmed dead end via https://novita.ai/legal/acceptable-use-policy
+      -- do NOT use for NSFW.
+    - ModelsLab (formerly stablediffusionapi.com) -- STRONGEST CANDIDATE:
+      their own product docs explicitly document a model_id="nsfw" and a
+      "safety_checker": "no" request parameter -- this is a documented,
+      marketed feature, not an accidental loophole. Their ToS doesn't ban
+      adult content (unlike Novita's explicit ban). Endpoint:
+      https://modelslab.com/api/v7/images/text-to-image (or v4/dreambooth
+      for the "nsfw" model specifically), key passed in JSON body not header.
+      Pricing: NO free trial, Basic plan $21/mo (~Rs1750) for 3,250 calls/mo
+      (~Rs0.54/image AT FULL 3250-image usage; effectively a flat ~Rs1750/mo
+      cost at current low volume since unused calls likely don't roll over).
+      Has a genuine 24-hour full-refund window on NEW subscriptions only
+      (not renewals) -- this is the safety net: subscribe, test immediately,
+      cancel within 24h for full refund if it doesn't actually work.
+      One unrelated Trustpilot complaint found about general output
+      relevance/quality ("asked for a house, got a horse") -- not NSFW
+      specific, just a quality flag to keep in mind.
+
+  DECISION NOT YET MADE: user was weighing whether the effective ~Rs1750/mo
+  flat cost (at current low volume, well under 3,250 images/mo) is worth it
+  right now vs waiting. Nothing purchased, nothing implemented yet.
+
+--- 4. FIXED: credits were charged even when photo generation failed ---
+  - chat.py: credit deduction moved from "immediately on request" to "after
+    we know the real outcome" -- the affordability check (can they afford
+    it) still happens upfront, but the actual deduction now happens after
+    generation completes. Photo requested + delivered = full photo rate
+    (8cr). Photo requested but generation failed (e.g. the fal.ai 422 above)
+    = charged the cheaper text-only rate (1cr) instead, since a text reply
+    was still delivered either way.
+  - Verified live: confirmed via server logs that both of two real test
+    requests correctly logged "charging text-only rate (1cr) instead of
+    photo rate (8cr)" after a failed NSFW generation attempt.
+
+=== NOT YET DONE / NEXT STEPS FOR TOMORROW ===
+1. **Decide on ModelsLab subscription** -- if going ahead: sign up, get API
+   key, IMMEDIATELY test a real NSFW request before the 24h refund window
+   closes, then implement the actual integration (new
+   app/services/modelslab_service.py or similar, wire into
+   image_service.py's NSFW branch alongside the existing fal.ai SFW path).
+   fal.ai credentials/subscription stay untouched -- keep using for SFW.
+2. Droplet upgrade decision still pending from yesterday (1 vCPU/512MB,
+   ~Rs600/mo currently -> ~Rs1800-2000/mo for 2vCPU/4GB would handle
+   ~100-150 concurrent users, now that the async fix from today is also in
+   place to actually take advantage of it).
+3. Consider the SFW flux-pro-ultra cost tail-risk (Rs5/photo) -- still not
+   addressed, mentioned twice now, still open.
+4. Mobile app (mobile_app/) review from 2026-09-11 still pending, untouched.
+5. Disk space check now that R2 + today's fixes are live -- was 78% full
+   before R2 migration, worth a fresh look.
+
+=== HOW TO PICK THIS BACK UP (still accurate) ===
+Server access: SSH key at "D:\My Projects\server for  ai girl friend\do_ed25519",
+root@165.22.11.170. App lives at /var/www/AI_partner (git remote:
+github.com/abhinavb4067/AI_partner, branch main). Backend: `systemctl restart
+fastapi`. Frontend: `cd frontend && npm run build && systemctl restart nginx`.
+Note: fastapi.service now has PYTHONUNBUFFERED=1 -- logs work, use
+`journalctl -u fastapi --since '<time>' --until '<time>'` to debug.
