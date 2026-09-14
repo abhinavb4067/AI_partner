@@ -9,10 +9,10 @@ import '../../core/theme.dart';
 /// in-app WebView, authenticated as the same user, so we reuse the existing
 /// payment-gateway integration instead of re-implementing it natively.
 ///
-/// Requires the web app to accept a one-off `?mobile_token=` query param on
-/// `/pricing` and seed it into localStorage as `token`/`user_id` (a few
-/// lines in the web app's entry point) — until then this screen still lets
-/// the user complete checkout by signing in inside the WebView directly.
+/// The web app seeds `?mobile_token=`/`?mobile_uid=` into localStorage as
+/// `token`/`user_id` before its first render (see frontend/src/main.jsx),
+/// so the WebView opens already signed in as this same user — no second
+/// login required.
 class PaymentWebviewScreen extends StatefulWidget {
   const PaymentWebviewScreen({super.key, this.planName});
   final String? planName;
