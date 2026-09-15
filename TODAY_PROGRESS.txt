@@ -476,24 +476,62 @@ frontend rebuilt and nginx restarted each time, spot-verified against the
 real server after each deploy (not just "should work"). Nothing is sitting
 half-finished, uncommitted, or undeployed. Safe to close for the night.
 
-=== NEXT STEPS FOR TOMORROW (carried forward, still open) ===
+================================================================================
+Date: 2026-09-15
+================================================================================
+
+=== ITEMS 4 AND 6 FROM YESTERDAY: DONE ===
+Found Flutter was ALREADY installed on this machine (C:\src\flutter,
+3.44.9 stable) — just not on PATH, and never actually run against this repo.
+Full Android toolchain (SDK, Java 17, emulator "Play_Tablet_10in") also
+already present.
+
+- `flutter doctor -v`: no issues found (Android toolchain, Chrome, Visual
+  Studio, all connected devices — all green).
+- `flutter pub get`: resolved clean.
+- `flutter analyze`: 28 issues, ALL info-level (deprecated `withOpacity` ->
+  `withValues`, missing `const` on a few constructors) — zero errors, zero
+  warnings. These exist throughout the pre-existing codebase too, not
+  introduced by any of yesterday's changes. Confirms everything from
+  yesterday (WsService subprotocol switch, ChatService.getStory +
+  getHistory URL fix, StoryScreen, the 6 dispose() fixes, profile_screen's
+  FCM+Google signout calls) is syntactically/type correct.
+- `flutter build apk --debug`: succeeded, produced a real 228MB
+  app-debug.apk.
+- Installed it on the Play_Tablet_10in emulator, launched it, captured
+  logcat and a screenshot: app renders correctly (real themed Login
+  screen, pink/purple gradient, "Welcome back" branding), NO crash, no
+  FATAL exceptions, no AndroidRuntime errors. Only issue found: Firebase
+  push init fails gracefully with a clear log message because
+  google-services.json isn't present in this local dev checkout (expected
+  — that's a gitignored config file, same category as firebase_admin_sdk.json
+  on the backend; not a code bug).
+- NOT tested: actually logging in and reaching the Story screen / chat /
+  WebSocket in a live run — no test account credentials with a known
+  password were available in this session. The build/launch/render
+  verification above is real and strong, but the login->chat->story path
+  itself was still only verified via flutter analyze, not an actual live
+  run through it.
+
+Test screenshot + APK were not committed (temp verification artifacts,
+build/ is gitignored anyway) — working tree is clean, nothing new to push
+from this verification pass itself.
+
+=== STILL OPEN (carried forward) ===
 1. ModelsLab NSFW image-gen subscription -- decision + purchase still
    pending (₹1,750/mo, 24h refund window if it doesn't work -- see
-   research earlier in today's log).
+   research in the earlier 2026-09-14 section of this log).
 2. Droplet upgrade decision -- still pending (current 1vCPU/512MB
    ~Rs600/mo vs ~Rs1800-2000/mo for 2vCPU/4GB).
 3. flux-pro-ultra is still the default SFW image model (~Rs5/photo) --
-   the daily cap added tonight bounds the blast radius but doesn't reduce
-   the per-photo cost itself. Consider switching SFW default to something
-   cheaper too, if margins matter more than SFW photo quality.
-4. Flutter SDK still not installed/verified anywhere -- real `flutter
-   analyze`/build has never been run on this codebase, including on all of
-   today's mobile_app changes (WsService, ChatService, StoryScreen, the 6
-   dispose() fixes, profile_screen.dart's FCM+Google signout calls). High
-   value next step: get Flutter installed somewhere and actually build it.
-5. Whether to gate any part of "Our Story" behind subscription tier --
+   the daily cap added on 2026-09-14 bounds the blast radius but doesn't
+   reduce the per-photo cost itself.
+4. Whether to gate any part of "Our Story" behind subscription tier --
    open product decision, not made yet.
-6. Mobile app has still never been through a real device/emulator test run
-   of anything built today -- the Story screen, the WS subprotocol switch,
-   the mobile checkout bridge. All reviewed by reading code + IDE
-   diagnostics only, same caveat as item 4.
+5. A genuine live run through login -> chat -> Story screen on
+   mobile has still not happened (see note above) -- worth doing once
+   there's a known-password test account handy.
+6. DONE -- added C:\src\flutter\bin to the user's persistent Windows PATH
+   (via [Environment]::SetEnvironmentVariable(...,'User')). Takes effect in
+   new terminals/IDE windows going forward; this session's existing shell
+   still needed the manual `export PATH=...` used above.
